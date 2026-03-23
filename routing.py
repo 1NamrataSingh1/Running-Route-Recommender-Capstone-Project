@@ -357,7 +357,8 @@ def candidates_near_distance(
     found.sort(key=lambda x: x[1])
     return [n for n, _ in found[:max_n]]
 
-
+def _flat(n):
+    return int(n[0]) if isinstance(n, list) else int(n)
 # ---------------------------------------------------------------------------
 # 4.  ROUTING STRATEGIES
 # ---------------------------------------------------------------------------
@@ -372,20 +373,33 @@ def generate_basic_route(
     H = build_cost_graph(G, prefs)
     s = snap_to_node(G, start_lat, start_lon)
 
-    # shift longitude east by ~distance_m to pick a target direction
-    lon_offset = distance_m / (111_320 * math.cos(math.radians(start_lat)))
-    target = snap_to_node(G, start_lat, start_lon + lon_offset)
+    # Try 8 compass directions instead of just east
+    directions_deg = [0, 45, 90, 135, 180, 225, 270, 315]
+    scored = []
+    for bearing in directions_deg:
+        rad = math.radians(bearing)
+        lat_offset = math.cos(rad) * distance_m / 111_320
+        lon_offset = math.sin(rad) * distance_m / (111_320 * math.cos(math.radians(start_lat)))
+        target = snap_to_node(G, start_lat + lat_offset, start_lon + lon_offset)
+        path = dijkstra(H, s, target)
+        if not path:
+            continue
+        err = abs(path_length_m(G, path) - distance_m)
+        scored.append((err, path))
 
-    path = dijkstra(H, s, target)
-    if not path:
-        raise ValueError("No path found. Try a different start location or shorter distance.")
+    if not scored:
+        raise ValueError("No path found.")
 
-    return {
-        "route_type":       "basic",
-        "geometry":         path_to_coords(G, path),
-        "distance_m":       round(path_length_m(G, path), 1),
-        "elevation_gain_m": round(path_elevation_gain_m(G, path), 1),
-    }
+    scored.sort(key=lambda x: x[0])
+    routes = []
+    for _, path in scored[:5]:
+        routes.append({
+            "route_type":       "basic",
+            "geometry":         path_to_coords(G, path),
+            "distance_m":       round(path_length_m(G, path), 1),
+            "elevation_gain_m": round(path_elevation_gain_m(G, path), 1),
+        })
+    return {"routes": routes}
 
 
 def generate_out_and_back(
@@ -395,7 +409,9 @@ def generate_out_and_back(
     distance_m: float,
     prefs: dict,
 ) -> dict:
-    """Finds the best turnaround point at ~distance/2 away, routes there, then reverses."""
+    """Finds the best turnaround point at ~distance/2 away, routes there, then reverses.
+    Returns the top 5 scored routes.
+    """
     H = build_cost_graph(G, prefs)
     s = snap_to_node(G, start_lat, start_lon)
 
@@ -403,28 +419,33 @@ def generate_out_and_back(
     if not candidates:
         raise ValueError("No turnaround candidates found. Try a longer distance.")
 
-    best_path, best_err = None, float("inf")
-    for cand in candidates:
+    scored = []
+    for i, cand in enumerate(candidates):              # ← enumerate for tiebreaker
         p = dijkstra(H, s, cand)
         if not p:
             continue
-        err = abs(path_length_m(G, p) * 2 - distance_m)
-        if err < best_err:
-            best_err, best_path = err, p
+        p_flat = [_flat(n) for n in p]                # ← flatten node IDs
+        err = abs(path_length_m(G, p_flat) * 2 - distance_m)
+        scored.append((err, i, p_flat))               # ← i as tiebreaker
 
-    if best_path is None:
+    if not scored:
         raise ValueError("Could not build an out-and-back route.")
 
-    turnaround_coord = path_to_coords(G, best_path)[-1]
-    full = best_path + list(reversed(best_path[:-1]))
+    scored.sort(key=lambda x: x[0])                   # ← sort by error only
 
-    return {
-        "route_type":       "out-and-back",
-        "turnaround":       turnaround_coord,
-        "geometry":         path_to_coords(G, full),
-        "distance_m":       round(path_length_m(G, full), 1),
-        "elevation_gain_m": round(path_elevation_gain_m(G, full), 1),
-    }
+    routes = []
+    for _, _, best_path in scored[:5]:                # ← unpack 3 values
+        turnaround_coord = path_to_coords(G, best_path)[-1]
+        full = best_path + list(reversed(best_path[:-1]))
+        routes.append({
+            "route_type":       "out-and-back",
+            "turnaround":       turnaround_coord,
+            "geometry":         path_to_coords(G, full),
+            "distance_m":       round(path_length_m(G, full), 1),
+            "elevation_gain_m": round(path_elevation_gain_m(G, full), 1),
+        })
+
+    return {"routes": routes}
 
 
 def generate_loop(
@@ -438,6 +459,7 @@ def generate_loop(
     Starts at the runner's location, goes out to a waypoint, and comes back
     via a different path. Edges used on the outward leg are penalized 6x on
     the return trip to discourage retracing the same streets.
+    Returns the top 5 scored routes.
     """
     H = build_cost_graph(G, prefs)
     s = snap_to_node(G, start_lat, start_lon)
@@ -446,43 +468,48 @@ def generate_loop(
     if not candidates:
         raise ValueError("No loop waypoint candidates found. Try a longer distance.")
 
-    best_route, best_score = None, float("inf")
-    for wp in candidates:
-        path_out = dijkstra(H, s, wp)  # first half of the loop
+    scored = []
+    for i, wp in enumerate(candidates):          # ← enumerate for tiebreaker
+        path_out = dijkstra(H, s, wp)
         if not path_out:
             continue
 
         # build return graph with heavy penalties on already-used edges
         H_ret     = H.copy()
-        out_edges = set(zip(path_out[:-1], path_out[1:]))  # streets used on the way out
+        path_out_flat = [_flat(n) for n in path_out]
+        out_edges = set(zip(path_out_flat[:-1], path_out_flat[1:]))
         for u, v, key in H_ret.edges(keys=True):
-            if (u, v) in out_edges or (v, u) in out_edges:
-                H_ret[u][v][key]["cost"] *= 6  # heavily discourage reuse
+            if (_flat(u), _flat(v)) in out_edges or (_flat(v), _flat(u)) in out_edges:
+                H_ret[u][v][key]["cost"] *= 6
 
-        path_back = dijkstra(H_ret, wp, s)  # return route via different streets
+        path_back = dijkstra(H_ret, wp, s)
         if not path_back:
             continue
+        path_back_flat = [_flat(n) for n in path_back]
+        full           = path_out_flat + path_back_flat[1:]
 
-        full       = path_out + path_back[1:]
         total_len  = path_length_m(G, full)
-        back_edges = set(zip(path_back[:-1], path_back[1:]))
-        overlap    = len(out_edges & back_edges) / max(len(out_edges), 1)  # fraction of streets reused
+        back_edges = set(zip(path_back_flat[:-1], path_back_flat[1:]))
+        overlap    = len(out_edges & back_edges) / max(len(out_edges), 1)
 
-        # score: penalize distance error and street overlap
         score = abs(total_len - distance_m) / distance_m + overlap * 2
-        if score < best_score:
-            best_score, best_route = score, full
+        scored.append((score, i, full))          # ← i as tiebreaker
 
-    if best_route is None:
+    if not scored:
         raise ValueError("Could not build a loop route.")
 
-    return {
-        "route_type":       "loop",
-        "geometry":         path_to_coords(G, best_route),
-        "distance_m":       round(path_length_m(G, best_route), 1),
-        "elevation_gain_m": round(path_elevation_gain_m(G, best_route), 1),
-    }
+    scored.sort(key=lambda x: x[0])             # ← sort by score only
 
+    routes = []
+    for _, _, route in scored[:5]:              # ← unpack 3 values
+        routes.append({
+            "route_type":       "loop",
+            "geometry":         path_to_coords(G, route),
+            "distance_m":       round(path_length_m(G, route), 1),
+            "elevation_gain_m": round(path_elevation_gain_m(G, route), 1),
+        })
+
+    return {"routes": routes}
 
 def generate_random_explore(
     G: nx.MultiDiGraph,
@@ -493,70 +520,72 @@ def generate_random_explore(
     randomness_level: float = 0.5,
 ) -> dict:
     """
-    Creates an exploratory route by choosing random nearby waypoints, connecting
+    Creates 5 exploratory routes by choosing random nearby waypoints, connecting
     them with the best paths, and returning to the start near the target distance.
     Higher randomness_level = wider search radius and more waypoints.
     """
-    H = build_cost_graph(G, prefs)
-    s = snap_to_node(G, start_lat, start_lon)
-    s_lat, s_lon = node_latlon(G, s)
+    routes = []
+    for _ in range(5):
+        H = build_cost_graph(G, prefs)
+        s = snap_to_node(G, start_lat, start_lon)
+        s_lat, s_lon = node_latlon(G, s)
 
-    # higher randomness = larger search radius for waypoints
-    radius_m  = distance_m / 3 * (1 + randomness_level)
-    tolerance = 0.15  # accept routes within ±15% of the requested distance
+        radius_m  = distance_m / 3 * (1 + randomness_level)
+        tolerance = 0.15
 
-    # shuffle all nodes and keep only those within the allowed radius
-    all_nodes = list(G.nodes)
-    random.shuffle(all_nodes)
-    waypoints = [
-        n for n in all_nodes
-        if haversine_m(s_lat, s_lon, *node_latlon(G, n)) <= radius_m
-    ][:max(10, int(25 * randomness_level))]
-    random.shuffle(waypoints)
+        all_nodes = list(G.nodes)
+        random.shuffle(all_nodes)
+        waypoints = [
+            n for n in all_nodes
+            if haversine_m(s_lat, s_lon, *node_latlon(G, n)) <= radius_m
+        ][:max(10, int(25 * randomness_level))]
+        random.shuffle(waypoints)
 
-    H_exp      = H.copy()
-    full_path  = [s]
-    cumulative = 0.0
-    used_edges: set[tuple[int, int]] = set()  # tracks visited edges to avoid repetition
-    current    = s
+        H_exp      = H.copy()
+        full_path  = [_flat(s)]                          # ← flatten start node
+        cumulative = 0.0
+        used_edges: set[tuple[int, int]] = set()
+        current    = s
 
-    for wp in waypoints:
-        if wp == current:
-            continue
-        seg = dijkstra(H_exp, current, wp)  # best path to the next waypoint
-        if not seg:
-            continue
-        seg_len = path_length_m(G, seg)
-        if cumulative + seg_len > distance_m * (1 + tolerance):
-            break  # adding this segment would overshoot the target distance
+        for wp in waypoints:
+            if wp == current:
+                continue
+            seg = dijkstra(H_exp, current, wp)
+            if not seg:
+                continue
+            seg_flat = [_flat(n) for n in seg]           # ← flatten segment
+            seg_len  = path_length_m(G, seg_flat)
+            if cumulative + seg_len > distance_m * (1 + tolerance):
+                break
 
-        # penalize already-used edges so the route keeps exploring new streets
-        for u, v in zip(seg[:-1], seg[1:]):
-            key = (min(u, v), max(u, v))
-            if key in used_edges:
-                for k in H_exp[u][v]:
-                    H_exp[u][v][k]["cost"] *= 4
-            used_edges.add(key)
+            for u, v in zip(seg_flat[:-1], seg_flat[1:]):
+                key = (min(u, v), max(u, v))
+                if key in used_edges:
+                    for k in H_exp[u][v]:
+                        H_exp[u][v][k]["cost"] *= 4
+                used_edges.add(key)
 
-        full_path  += seg[1:]  # skip the first node to avoid duplicating the connection point
-        cumulative += seg_len
-        current     = wp
+            full_path  += seg_flat[1:]
+            cumulative += seg_len
+            current     = wp
 
-        if abs(cumulative - distance_m) / distance_m <= tolerance:
-            break  # close enough to target distance, stop adding waypoints
+            if abs(cumulative - distance_m) / distance_m <= tolerance:
+                break
 
-    # route back to start if we haven't returned yet
-    if current != s:
-        home = dijkstra(H_exp, current, s)
-        if home:
-            full_path += home[1:]
+        if current != s:
+            home = dijkstra(H_exp, current, s)
+            if home:
+                home_flat  = [_flat(n) for n in home]   # ← flatten home path
+                full_path += home_flat[1:]
 
-    return {
-        "route_type":       "random",
-        "geometry":         path_to_coords(G, full_path),
-        "distance_m":       round(path_length_m(G, full_path), 1),
-        "elevation_gain_m": round(path_elevation_gain_m(G, full_path), 1),
-    }
+        routes.append({
+            "route_type":       "random",
+            "geometry":         path_to_coords(G, full_path),
+            "distance_m":       round(path_length_m(G, full_path), 1),
+            "elevation_gain_m": round(path_elevation_gain_m(G, full_path), 1),
+        })
+
+    return {"routes": routes}
 
 
 # ---------------------------------------------------------------------------
