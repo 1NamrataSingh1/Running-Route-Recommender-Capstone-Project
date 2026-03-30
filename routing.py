@@ -32,7 +32,10 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
+geolocator = Nominatim(user_agent="running_route_api")
 # ---------------------------------------------------------------------------
 # 0.  UNIT CONVERSION CONSTANTS
 # ---------------------------------------------------------------------------
@@ -764,7 +767,14 @@ SHARED_DESC = """
 - **w_trail** (0.8)  — prefers trails and parks
 - **trail_preference** — "none" | "normal" | "high"
 """
-
+def geocode_address(address: str) -> tuple[float, float]:
+    try:
+        location = geolocator.geocode(address, timeout=10)
+    except (GeocoderTimedOut, GeocoderServiceError) as e:
+        raise ValueError(f"Geocoding failed: {e}")
+    if location is None:
+        raise ValueError(f"Address not found: '{address}'")
+    return location.latitude, location.longitude
 
 def _build_prefs(
     w_length: float, w_elev: float, w_safe: float,
@@ -778,10 +788,20 @@ def _build_prefs(
 
 @app.get("/route/basic", summary="Single-path route", description=SHARED_DESC)
 def basic_route(
-    start_lat: float, start_lon: float, distance: float,
+    distance: float,
+    address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
 ):
+    # resolve address OR lat/lon
+    if address:
+        try:
+            start_lat, start_lon = geocode_address(address)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    elif start_lat is None or start_lon is None:
+        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
+
     prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
     try:
         return generate_basic_route(G, start_lat, start_lon, mi_to_m(distance), prefs)
@@ -791,10 +811,20 @@ def basic_route(
 
 @app.get("/route/out-and-back", summary="Out-and-back route", description=SHARED_DESC)
 def out_and_back(
-    start_lat: float, start_lon: float, distance: float,
+    distance: float,
+    address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
 ):
+    # resolve address OR lat/lon
+    if address:
+        try:
+            start_lat, start_lon = geocode_address(address)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    elif start_lat is None or start_lon is None:
+        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
+
     prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
     try:
         return generate_out_and_back(G, start_lat, start_lon, mi_to_m(distance), prefs)
@@ -804,10 +834,20 @@ def out_and_back(
 
 @app.get("/route/loop", summary="Loop route", description=SHARED_DESC)
 def loop_route(
-    start_lat: float, start_lon: float, distance: float,
+    distance: float,
+    address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
 ):
+    # resolve address OR lat/lon
+    if address:
+        try:
+            start_lat, start_lon = geocode_address(address)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    elif start_lat is None or start_lon is None:
+        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
+
     prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
     try:
         return generate_loop(G, start_lat, start_lon, mi_to_m(distance), prefs)
@@ -817,14 +857,23 @@ def loop_route(
 
 @app.get("/route/random", summary="Random exploratory route", description=SHARED_DESC)
 def random_route(
-    start_lat: float, start_lon: float, distance: float,
-    randomness_level: float = 0.5,
+    distance: float,
+    address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
 ):
+    # resolve address OR lat/lon
+    if address:
+        try:
+            start_lat, start_lon = geocode_address(address)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    elif start_lat is None or start_lon is None:
+        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
+
     prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
     try:
-        return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs, randomness_level)
+        return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
