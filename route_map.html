@@ -257,6 +257,15 @@
     }
     .leaflet-popup-tip { background: var(--panel) !important; }
     .split-marker-icon { background: none; border: none; }
+    .slider-range-labels {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 0.55rem;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
   </style>
 </head>
 <body>
@@ -332,27 +341,32 @@
     </div>
     <div id="adv-weights">
       <div class="field slider-field">
-        <label>w_length (route directness) <span id="wl-val">1.0</span></label>
+        <label>Distance Precision Importance <span id="wl-val">1.0</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
         <input type="range" id="w_length" min="0" max="2" step="0.1" value="1.0"
                oninput="document.getElementById('wl-val').textContent=parseFloat(this.value).toFixed(1)"/>
       </div>
       <div class="field slider-field">
-        <label>w_elev (avoid hills) <span id="we-val">0.7</span></label>
+        <label>Elevation Importance (Prefer Flatter Routes) <span id="we-val">0.7</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
         <input type="range" id="w_elev" min="0" max="2" step="0.1" value="0.7"
                oninput="document.getElementById('we-val').textContent=parseFloat(this.value).toFixed(1)"/>
       </div>
       <div class="field slider-field">
-        <label>w_safe (prioritize safety) <span id="ws-val">1.2</span></label>
+        <label>Safety Importance <span id="ws-val">1.2</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
         <input type="range" id="w_safe" min="0" max="2" step="0.1" value="1.2"
                oninput="document.getElementById('ws-val').textContent=parseFloat(this.value).toFixed(1)"/>
       </div>
       <div class="field slider-field">
-        <label>w_road (avoid busy roads) <span id="wr-val">0.8</span></label>
+        <label>Traffic Level Importance <span id="wr-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
         <input type="range" id="w_road" min="0" max="2" step="0.1" value="0.8"
                oninput="document.getElementById('wr-val').textContent=parseFloat(this.value).toFixed(1)"/>
       </div>
       <div class="field slider-field">
-        <label>w_trail (prefer trails) <span id="wt-val">0.8</span></label>
+        <label>Trail Importance <span id="wt-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
         <input type="range" id="w_trail" min="0" max="2" step="0.1" value="0.8"
                oninput="document.getElementById('wt-val').textContent=parseFloat(this.value).toFixed(1)"/>
       </div>
