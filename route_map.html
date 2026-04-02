@@ -3,319 +3,597 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Route Viewer — Team 11</title>
+  <title>Route Recommender — Team 26</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Segoe UI', sans-serif;
-      background: #1a1a2e;
-      color: #eee;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
+    :root {
+      --bg:        #0d0f14;
+      --panel:     #13161e;
+      --border:    #1f2433;
+      --accent:    #7c6af7;
+      --accent2:   #4fd1c5;
+      --text:      #ffffff;   /* changed: was #e2e8f0 (grey-white) → pure white */
+      --muted:     #94a3b8;   /* changed: was #4a5568 (too dark) → readable light grey */
+      --success:   #48bb78;
+      --warn:      #f6ad55;
+      --danger:    #fc8181;
+      --mono:      'DM Mono', monospace;
+      --sans:      'Syne', sans-serif;
     }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      grid-template-rows: 52px 1fr;
+      overflow: hidden;
+    }
+
     header {
-      padding: 12px 24px;
-      background: #16213e;
-      border-bottom: 2px solid #7b5ea7;
+      grid-column: 1 / -1;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      gap: 16px;
+      padding: 0 20px;
+      gap: 12px;
+    }
+    header .logo { font-size: 1rem; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+    header .logo span { color: var(--accent); }
+    header .tag {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      background: var(--border);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .route-stats { margin-left: auto; display: flex; gap: 28px; align-items: center; }
+    .stat-item { text-align: right; }
+    .stat-item .lbl { font-family: var(--mono); font-size: 0.55rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .stat-item .val { font-family: var(--mono); font-size: 0.9rem; font-weight: 500; color: var(--accent2); }
+
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .sidebar-header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .sidebar-header h2 { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
+
+    .form-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .form-section-title {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; font-family: var(--mono); }
+    .field input, .field select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--panel); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .slider-field label { display: flex; justify-content: space-between; }
+    .slider-field label span { font-family: var(--mono); font-size: 0.72rem; color: var(--accent2); }
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+      margin-top: 6px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    .adv-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .adv-toggle {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--accent);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .adv-toggle::before { content: '▶'; font-size: 0.5rem; transition: transform 0.2s; }
+    .adv-toggle.open::before { transform: rotate(90deg); }
+
+    .btn-reset-weights {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      display: none;
+    }
+    .btn-reset-weights:hover { color: var(--accent2); border-color: var(--accent2); }
+    .btn-reset-weights.visible { display: inline-block; }
+
+    #adv-weights { display: none; }
+    #adv-weights.visible { display: block; }
+
+    .btn-generate {
+      margin: 14px 20px;
+      width: calc(100% - 40px);
+      padding: 11px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: var(--sans);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn-generate:hover { opacity: 0.88; }
+    .btn-generate:active { transform: scale(0.98); }
+    .btn-generate:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .route-tabs { padding: 10px 20px 0; display: none; flex-direction: column; gap: 6px; }
+    .route-tabs.visible { display: flex; }
+    .route-tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      background: transparent;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .route-tab:hover { border-color: var(--accent); background: rgba(124,106,247,0.06); }
+    .route-tab.active { border-color: var(--accent); background: rgba(124,106,247,0.12); }
+    .route-tab .tab-num {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      background: var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
       flex-shrink: 0;
     }
-    header h1 { font-size: 1.1rem; font-weight: 600; color: #c9a9e9; }
-    .stats { display: flex; gap: 24px; margin-left: auto; align-items: center; }
-    .stat .label { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 1px; color: #888; }
-    .stat .value { font-size: 1rem; font-weight: 700; color: #c9a9e9; }
+    .route-tab.active .tab-num { background: var(--accent); color: white; }
+    .route-tab .tab-info { flex: 1; }
+    .route-tab .tab-dist { font-family: var(--mono); font-size: 0.75rem; color: var(--text); }
+    .route-tab .tab-elev { font-family: var(--mono); font-size: 0.65rem; color: var(--muted); }
 
-    #route-type-badge {
-      display: none;
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      background: #7b5ea7;
-      color: white;
-    }
+    #status { margin: 8px 20px; font-family: var(--mono); font-size: 0.7rem; display: none; }
+    #status.loading { color: var(--accent2); display: block; }
+    #status.error   { color: var(--danger);  display: block; }
 
-    #upload-overlay {
-      flex: 1;
+    main { position: relative; background: #0a0c11; }
+    #map { width: 100%; height: 100%; }
+
+    #map-empty {
+      position: absolute;
+      inset: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 20px;
+      gap: 12px;
+      pointer-events: none;
     }
-    #drop-zone {
-      width: 420px;
-      padding: 48px 32px;
-      border: 2px dashed #7b5ea7;
-      border-radius: 16px;
-      text-align: center;
-      cursor: pointer;
-      transition: all 0.2s;
-      background: #16213e;
-    }
-    #drop-zone.drag-over {
-      border-color: #c9a9e9;
-      background: #1e1e3f;
-      transform: scale(1.02);
-    }
-    #drop-zone .icon { font-size: 3rem; margin-bottom: 12px; }
-    #drop-zone h2 { color: #c9a9e9; font-size: 1.2rem; margin-bottom: 8px; }
-    #drop-zone p { color: #888; font-size: 0.85rem; line-height: 1.5; }
-    #file-input { display: none; }
-    .upload-btn {
-      margin-top: 16px;
-      padding: 10px 28px;
-      background: #7b5ea7;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .upload-btn:hover { background: #9b7ec7; }
-    .hint { color: #555; font-size: 0.8rem; text-align: center; }
+    #map-empty .big { font-size: 3rem; }
+    #map-empty p { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); text-align: center; line-height: 1.8; }
 
-    #map { flex: 1; display: none; }
-
-    #reset-btn {
-      display: none;
-      padding: 6px 16px;
-      background: transparent;
-      border: 1px solid #7b5ea7;
-      color: #c9a9e9;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.8rem;
-      margin-left: 12px;
-      transition: all 0.2s;
-    }
-    #reset-btn:hover { background: #7b5ea7; color: white; }
-
-    #error-msg {
-      color: #f44336;
-      font-size: 0.85rem;
-      display: none;
-      margin-top: 8px;
-    }
-
-    /* Legend */
     #legend {
       display: none;
       position: absolute;
-      bottom: 24px;
-      left: 12px;
+      bottom: 20px;
+      right: 12px;
       z-index: 1000;
-      background: #16213e;
-      border: 1px solid #7b5ea7;
-      border-radius: 10px;
-      padding: 12px 16px;
-      font-size: 0.8rem;
-      color: #ccc;
-      min-width: 160px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
     }
-    #legend h4 { color: #c9a9e9; margin-bottom: 8px; font-size: 0.85rem; }
-    .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-    .legend-dot {
-      width: 14px; height: 14px;
+    #legend h4 { color: var(--text); margin-bottom: 7px; font-size: 0.72rem; }
+    .leg { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); flex-shrink: 0; }
+    .dot-split {
+      width: 12px; height: 12px;
       border-radius: 50%;
-      border: 2px solid white;
+      border: 2px solid rgba(255,255,255,0.3);
       flex-shrink: 0;
+      background: linear-gradient(to right, #48bb78 50%, #fc8181 50%);
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: var(--panel) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 8px !important;
+      font-family: var(--mono) !important;
+      font-size: 0.75rem !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5) !important;
+    }
+    .leaflet-popup-tip { background: var(--panel) !important; }
+    .split-marker-icon { background: none; border: none; }
+    .slider-range-labels {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      font-family: var(--mono);
+      font-size: 0.55rem;
+      color: var(--muted);
+      margin-bottom: 2px;
     }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>🏃 Route Viewer — Team 11</h1>
-  <div class="stats">
-    <span id="route-type-badge"></span>
-    <div class="stat">
-      <div class="label">Distance</div>
-      <div class="value" id="stat-dist">—</div>
+  <div class="logo">Route<span>Rec</span></div>
+  <div class="tag">Team 26 · DS440</div>
+  <div class="route-stats">
+    <div class="stat-item">
+      <div class="lbl">Route Type</div>
+      <div class="val" id="hdr-type">—</div>
     </div>
-    <div class="stat">
-      <div class="label">Elevation Gain</div>
-      <div class="value" id="stat-elev">—</div>
+    <div class="stat-item">
+      <div class="lbl">Distance</div>
+      <div class="val" id="hdr-dist">—</div>
     </div>
-    <div class="stat">
-      <div class="label">Waypoints</div>
-      <div class="value" id="stat-pts">—</div>
+    <div class="stat-item">
+      <div class="lbl">Elev. Gain</div>
+      <div class="val" id="hdr-elev">—</div>
     </div>
   </div>
-  <button id="reset-btn" onclick="resetMap()">↩ Load new route</button>
 </header>
 
-<div id="upload-overlay">
-  <div id="drop-zone">
-    <div class="icon">🗺️</div>
-    <h2>Drop your route JSON here</h2>
-    <p>Drag and drop the JSON file from your API response,<br/>or click the button below to browse.</p>
-    <div id="error-msg">❌ Invalid file — make sure it's a JSON with a "geometry" array.</div>
-    <button class="upload-btn" onclick="document.getElementById('file-input').click()">
-      Browse for file
-    </button>
-    <input type="file" id="file-input" accept=".json,application/json"/>
-  </div>
-  <p class="hint">
-    Expected format: <code>{ "route_type": "basic", "geometry": [[lat, lon], ...], "distance_m": 5000, "elevation_gain_m": 12 }</code>
-  </p>
-</div>
+<aside>
+  <div class="sidebar-header"><h2>Configure Route</h2></div>
 
-<div id="map"></div>
+  <div class="form-section">
+    <div class="form-section-title">Location &amp; Distance</div>
+    <div class="field">
+      <label>Start Address</label>
+      <input type="text" id="address" placeholder="e.g. 1600 Broad St, Philadelphia, PA"/>
+    </div>
+    <div class="field">
+      <label>Distance (miles)</label>
+      <input type="number" id="distance" value="3.1" step="0.1" min="0.3"/>
+    </div>
+  </div>
 
-<!-- Dynamic legend (shown over map) -->
-<div id="legend">
-  <h4>Legend</h4>
-  <div class="legend-item">
-    <div class="legend-dot" style="background:#4caf50"></div> Start
+  <div class="form-section">
+    <div class="form-section-title">Route Type</div>
+    <div class="field">
+      <label>Type</label>
+      <select id="route_type">
+        <option value="basic">Basic (one-way)</option>
+        <option value="out-and-back">Out and Back</option>
+        <option value="loop" selected>Loop</option>
+        <option value="random">Random / Exploratory</option>
+      </select>
+    </div>
+    <div class="field slider-field" id="randomness-field" style="display:none">
+      <label>Randomness Level <span id="rand-val">0.5</span></label>
+      <input type="range" id="randomness_level" min="0" max="1" step="0.05" value="0.5"
+             oninput="document.getElementById('rand-val').textContent=parseFloat(this.value).toFixed(2)"/>
+    </div>
   </div>
-  <div class="legend-item" id="legend-end">
-    <div class="legend-dot" style="background:#f44336"></div> End / Finish
+
+  <div class="form-section">
+    <div class="form-section-title">Trail Preference</div>
+    <div class="field">
+      <label>Preference</label>
+      <select id="trail_preference">
+        <option value="none">None — avoid trails</option>
+        <option value="normal" selected>Normal</option>
+        <option value="high">High — seek trails</option>
+      </select>
+    </div>
   </div>
-  <div class="legend-item" id="legend-turnaround" style="display:none">
-    <div class="legend-dot" style="background:#ff9800"></div> Turnaround
+
+  <div class="form-section">
+    <div class="adv-header">
+      <button class="adv-toggle" id="adv-btn" onclick="toggleAdv()">Advanced Weights</button>
+      <button class="btn-reset-weights" id="reset-weights-btn" onclick="resetWeights()">↺ Reset</button>
+    </div>
+    <div id="adv-weights">
+      <div class="field slider-field">
+        <label>Distance Precision Importance <span id="wl-val">1.0</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_length" min="0" max="2" step="0.1" value="1.0"
+               oninput="document.getElementById('wl-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Elevation Importance (Prefer Flatter Routes) <span id="we-val">0.7</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_elev" min="0" max="2" step="0.1" value="0.7"
+               oninput="document.getElementById('we-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Safety Importance <span id="ws-val">1.2</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_safe" min="0" max="2" step="0.1" value="1.2"
+               oninput="document.getElementById('ws-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Traffic Level Importance <span id="wr-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_road" min="0" max="2" step="0.1" value="0.8"
+               oninput="document.getElementById('wr-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Trail Importance <span id="wt-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_trail" min="0" max="2" step="0.1" value="0.8"
+               oninput="document.getElementById('wt-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+    </div>
   </div>
-</div>
+
+  <button class="btn-generate" id="gen-btn" onclick="generateRoutes()">Generate Routes</button>
+  <div id="status"></div>
+  <div class="route-tabs" id="route-tabs"></div>
+</aside>
+
+<main>
+  <div id="map-empty">
+    <div class="big">🗺️</div>
+    <p>Configure your route on the left<br/>and click <strong>Generate Routes</strong></p>
+  </div>
+  <div id="map"></div>
+  <div id="legend">
+    <h4>Legend</h4>
+    <div class="leg" id="leg-start"><div class="dot" style="background:#48bb78"></div> Start</div>
+    <div class="leg" id="leg-finish"><div class="dot" style="background:#fc8181"></div> Finish</div>
+    <div class="leg" id="leg-startfinish" style="display:none"><div class="dot-split"></div> Start / Finish</div>
+    <div class="leg" id="leg-turn" style="display:none"><div class="dot" style="background:#f6ad55"></div> Turnaround</div>
+  </div>
+</main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  let map = null;
+  // Empty string = relative URLs → API calls go to the same server that served this page.
+  // This means tiles load with a proper Referer header and the 403r error is gone.
+  // Always access the app via http://127.0.0.1:8000 (not by opening the file directly).
+  const API = '';
 
-  // ── Drag and drop ──────────────────────────────────────────────
-  const dropZone = document.getElementById('drop-zone');
+  let map       = null;
+  let allRoutes = [];
 
-  dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
+  const WEIGHT_DEFAULTS = {
+    w_length: { id: 'w_length', val: 1.0, display: 'wl-val' },
+    w_elev:   { id: 'w_elev',   val: 0.7, display: 'we-val' },
+    w_safe:   { id: 'w_safe',   val: 1.2, display: 'ws-val' },
+    w_road:   { id: 'w_road',   val: 0.8, display: 'wr-val' },
+    w_trail:  { id: 'w_trail',  val: 0.8, display: 'wt-val' },
+  };
+
+  document.getElementById('route_type').addEventListener('change', function () {
+    document.getElementById('randomness-field').style.display =
+      this.value === 'random' ? 'block' : 'none';
   });
-  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) readFile(file);
-  });
 
-  document.getElementById('file-input').addEventListener('change', e => {
-    if (e.target.files[0]) readFile(e.target.files[0]);
-  });
-
-  function readFile(file) {
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const data = JSON.parse(e.target.result);
-        if (!data.geometry || !Array.isArray(data.geometry) || data.geometry.length === 0) {
-          showError(); return;
-        }
-        renderRoute(data);
-      } catch { showError(); }
-    };
-    reader.readAsText(file);
+  function toggleAdv() {
+    const btn      = document.getElementById('adv-btn');
+    const box      = document.getElementById('adv-weights');
+    const resetBtn = document.getElementById('reset-weights-btn');
+    btn.classList.toggle('open');
+    box.classList.toggle('visible');
+    resetBtn.classList.toggle('visible');
   }
 
-  function showError() {
-    const err = document.getElementById('error-msg');
-    err.style.display = 'block';
-    setTimeout(() => err.style.display = 'none', 4000);
+  function resetWeights() {
+    Object.values(WEIGHT_DEFAULTS).forEach(({ id, val, display }) => {
+      document.getElementById(id).value = val;
+      document.getElementById(display).textContent = val.toFixed(1);
+    });
   }
 
-  // ── Render ─────────────────────────────────────────────────────
-  function renderRoute(data) {
-    const coords     = data.geometry;
-    const routeType  = data.route_type || 'unknown';  // basic / out-and-back / loop / random
+  function buildQuery() {
+    const address = encodeURIComponent(document.getElementById('address').value.trim());
+    const dist = document.getElementById('distance').value;
+    const wl   = document.getElementById('w_length').value;
+    const we   = document.getElementById('w_elev').value;
+    const ws   = document.getElementById('w_safe').value;
+    const wr   = document.getElementById('w_road').value;
+    const wt   = document.getElementById('w_trail').value;
+    const tp   = document.getElementById('trail_preference').value;
+    const rl   = document.getElementById('randomness_level').value;
+    const type = document.getElementById('route_type').value;
 
-    // Stats header
-    const distKm = (data.distance_m / 1000).toFixed(2);
-    const distMi = (data.distance_m / 1609.34).toFixed(2);
-    document.getElementById('stat-dist').textContent =
-      data.distance_m ? `${distKm} km (${distMi} mi)` : '—';
-    document.getElementById('stat-elev').textContent =
-      data.elevation_gain_m !== undefined ? `${data.elevation_gain_m} m` : '—';
-    document.getElementById('stat-pts').textContent = coords.length;
+    let params = `address=${address}&distance=${dist}` +
+                 `&w_length=${wl}&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}` +
+                 `&trail_preference=${tp}`;
+    if (type === 'random') params += `&randomness_level=${rl}`;
+    return `${API}/route/${type}?${params}`;
+  }
 
-    // Route type badge
-    const badge = document.getElementById('route-type-badge');
-    badge.textContent = routeType.replace(/-/g, ' ');
-    badge.style.display = 'inline-block';
+  async function generateRoutes() {
+    const btn    = document.getElementById('gen-btn');
+    const status = document.getElementById('status');
 
-    // Show map
-    document.getElementById('upload-overlay').style.display = 'none';
-    document.getElementById('map').style.display = 'block';
-    document.getElementById('reset-btn').style.display = 'inline-block';
+    btn.disabled = true;
+    status.className = 'loading';
+    status.textContent = '⟳  Generating routes — this may take 10–30 s…';
+    document.getElementById('route-tabs').classList.remove('visible');
+
+    try {
+      const resp = await fetch(buildQuery());
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      allRoutes = data.routes || [];
+      if (allRoutes.length === 0) throw new Error('No routes returned.');
+
+      status.className = '';
+      status.style.display = 'none';
+      buildTabs();
+      selectRoute(0);
+    } catch (e) {
+      status.className = 'error';
+      // NEW — handles both string and object errors
+      status.textContent = `✗  ${typeof e.message === 'string' ? e.message : JSON.stringify(e.message)}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function buildTabs() {
+    const container = document.getElementById('route-tabs');
+    container.innerHTML = '';
+    allRoutes.forEach((r, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'route-tab';
+      btn.id = `tab-${i}`;
+      btn.onclick = () => selectRoute(i);
+      btn.innerHTML = `
+        <span class="tab-num">${i + 1}</span>
+        <div class="tab-info">
+          <div class="tab-dist">${r.distance_mi} mi</div>
+          <div class="tab-elev">↑ ${r.elevation_gain_ft} ft elev. gain</div>
+        </div>`;
+      container.appendChild(btn);
+    });
+    container.classList.add('visible');
+  }
+
+  function selectRoute(idx) {
+    document.querySelectorAll('.route-tab').forEach((t, i) => {
+      t.classList.toggle('active', i === idx);
+    });
+
+    const r = allRoutes[idx];
+    document.getElementById('hdr-type').textContent = r.route_type.replace(/-/g, ' ');
+    document.getElementById('hdr-dist').textContent = `${r.distance_mi} mi`;
+    document.getElementById('hdr-elev').textContent = `${r.elevation_gain_ft} ft`;
+
+    renderMap(r);
+  }
+
+  function samePoint(a, b, thresholdM = 30) {
+    const R  = 6_371_000;
+    const p1 = a[0] * Math.PI / 180;
+    const p2 = b[0] * Math.PI / 180;
+    const dp = (b[0] - a[0]) * Math.PI / 180;
+    const dl = (b[1] - a[1]) * Math.PI / 180;
+    const x  = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x)) < thresholdM;
+  }
+
+  function splitMarker(latlng) {
+    const size = 22, r = size / 2;
+    const svg = `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+        <path d="M ${r},0 A ${r},${r} 0 0,0 ${r},${size} Z" fill="#48bb78"/>
+        <path d="M ${r},0 A ${r},${r} 0 0,1 ${r},${size} Z" fill="#fc8181"/>
+        <circle cx="${r}" cy="${r}" r="${r-1}" fill="none" stroke="white" stroke-width="2"/>
+        <line x1="${r}" y1="0" x2="${r}" y2="${size}" stroke="white" stroke-width="1.5"/>
+      </svg>`;
+    return L.marker(latlng, {
+      icon: L.divIcon({ className: 'split-marker-icon', html: svg, iconSize: [size, size], iconAnchor: [r, r], popupAnchor: [0, -r] })
+    });
+  }
+
+  function renderMap(route) {
+    const coords = route.geometry;
+    document.getElementById('map-empty').style.display = 'none';
     document.getElementById('legend').style.display = 'block';
 
-    // Init map once
     if (!map) {
-      map = L.map('map');
+      map = L.map('map', { zoomControl: true });
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>',
         maxZoom: 19
       }).addTo(map);
-    } else {
-      map.eachLayer(layer => {
-        if (!(layer instanceof L.TileLayer)) map.removeLayer(layer);
-      });
     }
 
-    // Route line
+    map.eachLayer(layer => { if (!(layer instanceof L.TileLayer)) map.removeLayer(layer); });
+
     const line = L.polyline(coords, {
-      color: '#c9a9e9', weight: 5, opacity: 0.9,
-      lineJoin: 'round', lineCap: 'round'
+      color: '#7c6af7', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round'
     }).addTo(map);
 
-    // Start marker — always shown
-    L.circleMarker(coords[0], {
-      radius: 10, fillColor: '#4caf50',
-      color: '#fff', weight: 2, fillOpacity: 1
-    }).addTo(map).bindPopup('<b>▶ Start</b>');
+    const start  = coords[0];
+    const finish = coords[coords.length - 1];
+    const isLoop = samePoint(start, finish);
 
-    // End marker — always shown
-    L.circleMarker(coords[coords.length - 1], {
-      radius: 10, fillColor: '#f44336',
-      color: '#fff', weight: 2, fillOpacity: 1
-    }).addTo(map).bindPopup('<b>⬛ Finish</b>');
+    const legStart       = document.getElementById('leg-start');
+    const legFinish      = document.getElementById('leg-finish');
+    const legStartFinish = document.getElementById('leg-startfinish');
 
-    // Turnaround marker — ONLY for out-and-back
-    const legendTurnaround = document.getElementById('legend-turnaround');
-    if (routeType === 'out-and-back') {
-      // Use the explicit turnaround coord if provided, otherwise use midpoint
-      const turnCoord = data.turnaround || coords[Math.floor(coords.length / 2)];
-      L.circleMarker(turnCoord, {
-        radius: 8, fillColor: '#ff9800',
-        color: '#fff', weight: 2, fillOpacity: 1
-      }).addTo(map).bindPopup('<b>↩ Turnaround</b>');
-      legendTurnaround.style.display = 'flex';
+    if (isLoop) {
+      splitMarker(start).addTo(map).bindPopup('<b>▶ Start &amp; Finish</b>');
+      legStart.style.display       = 'none';
+      legFinish.style.display      = 'none';
+      legStartFinish.style.display = 'flex';
     } else {
-      legendTurnaround.style.display = 'none';
+      L.circleMarker(start, {
+        radius: 10, fillColor: '#48bb78', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>▶ Start</b>');
+      L.circleMarker(finish, {
+        radius: 10, fillColor: '#fc8181', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>⬛ Finish</b>');
+      legStart.style.display       = 'flex';
+      legFinish.style.display      = 'flex';
+      legStartFinish.style.display = 'none';
+    }
+
+    const legTurn = document.getElementById('leg-turn');
+    if (route.route_type === 'out-and-back' && route.turnaround) {
+      L.circleMarker(route.turnaround, {
+        radius: 8, fillColor: '#f6ad55', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>↩ Turnaround</b>');
+      legTurn.style.display = 'flex';
+    } else {
+      legTurn.style.display = 'none';
     }
 
     map.fitBounds(line.getBounds(), { padding: [40, 40] });
-  }
-
-  // ── Reset ──────────────────────────────────────────────────────
-  function resetMap() {
-    document.getElementById('upload-overlay').style.display = 'flex';
-    document.getElementById('map').style.display = 'none';
-    document.getElementById('reset-btn').style.display = 'none';
-    document.getElementById('legend').style.display = 'none';
-    document.getElementById('route-type-badge').style.display = 'none';
-    document.getElementById('stat-dist').textContent = '—';
-    document.getElementById('stat-elev').textContent = '—';
-    document.getElementById('stat-pts').textContent = '—';
-    document.getElementById('file-input').value = '';
-    if (map) {
-      map.eachLayer(layer => {
-        if (!(layer instanceof L.TileLayer)) map.removeLayer(layer);
-      });
-    }
   }
 </script>
 </body>
