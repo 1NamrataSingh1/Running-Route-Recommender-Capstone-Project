@@ -492,6 +492,47 @@ def _diverse_top_n(scored_routes, n=5, min_diversity=0.5):
 
     return results
 
+def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
+    """Computes per-route scoring breakdown for UI display."""
+    total_road_penalty  = 0.0
+    total_trail_bonus   = 0.0
+    total_elev_cost     = 0.0
+    total_safety        = 0.0
+    total_length        = 0.0
+    trail_edges         = 0
+    total_edges         = 0
+
+    for u, v in zip(path[:-1], path[1:]):
+        edge_data = min(G[u][v].values(), key=lambda d: d.get("length", 1.0))
+        length    = float(edge_data.get("length", 1.0))
+        hw        = edge_data.get("highway", "unclassified")
+        if isinstance(hw, list):
+            hw = hw[0] if hw else "unclassified"
+        hw = str(hw)
+
+        trail_types = {'footway','path','cycleway','steps','pedestrian','track','bridleway'}
+        type_cat    = 'trail' if hw in trail_types else 'road'
+        alpha       = get_trail_alpha(prefs.get("trail_preference", "normal"))
+        grade       = float(edge_data.get("grade", 0.0))
+
+        total_road_penalty += road_penalty(hw, length, mean_edge_length)
+        total_trail_bonus  += abs(trail_bonus(type_cat, length, mean_edge_length, alpha))
+        total_elev_cost    += elevation_cost(grade, 0.5, 2.0, length, 0.05)
+        total_safety       += safety_score(edge_data)
+        total_length       += length
+        if type_cat == 'trail':
+            trail_edges += 1
+        total_edges += 1
+
+    trail_pct = round(100 * trail_edges / max(total_edges, 1))
+
+    return {
+        "trail_pct":      trail_pct,
+        "elev_cost":      round(total_elev_cost, 1),
+        "safety_cost":    round(total_safety, 1),
+        "road_penalty":   round(total_road_penalty, 1),
+        "trail_bonus":    round(total_trail_bonus, 1),
+    }
 
 # ---------------------------------------------------------------------------
 # 4.  ROUTING STRATEGIES
@@ -531,6 +572,7 @@ def generate_basic_route(
         "geometry":          path_to_coords(G, path),
         "distance_mi":       m_to_mi(path_length_m(G, path)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+        "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
 
 
@@ -575,6 +617,7 @@ def generate_out_and_back(
         "geometry":          path_to_coords(G, full),
         "distance_mi":       m_to_mi(path_length_m(G, full)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, full)),
+        "stats": compute_route_stats(G, path, prefs),
     } for full in diverse]}
 
 
@@ -652,6 +695,7 @@ def generate_loop(
         "geometry":          path_to_coords(G, route),
         "distance_mi":       m_to_mi(path_length_m(G, route)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, route)),
+        "stats": compute_route_stats(G, route, prefs),
     } for route in diverse]}
 
 
@@ -729,6 +773,7 @@ def generate_random_explore(
         "geometry":          path_to_coords(G, path),
         "distance_mi":       m_to_mi(path_length_m(G, path)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+        "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
 
 

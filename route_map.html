@@ -266,6 +266,73 @@
       color: var(--muted);
       margin-bottom: 2px;
     }
+    .route-stats-grid { 
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+
+      gap: 6px;
+      margin-top: 10px;
+      padding: 0 20px 12px;
+      display: none;
+    }
+    .route-stats-grid.visible { display: grid; }
+
+    .stat-badge {
+      border-radius: 7px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+    }
+    .stat-badge .badge-label {
+      font-family: var(--mono);
+      font-size: 0.55rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 3px;
+    }
+    .stat-badge .badge-val {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .stat-badge .badge-bar {
+      height: 3px;
+      border-radius: 2px;
+      margin-top: 5px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .stat-badge .badge-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.4s ease;
+    }
+
+    /* color themes per stat */
+    .badge-trail  { border-color: #4fd1c533; background: #4fd1c508; }
+    .badge-trail  .badge-label { color: var(--accent2); }
+    .badge-trail  .badge-bar-fill { background: var(--accent2); }
+
+    .badge-elev   { border-color: #f6ad5533; background: #f6ad5508; }
+    .badge-elev   .badge-label { color: var(--warn); }
+    .badge-elev   .badge-bar-fill { background: var(--warn); }
+
+    .badge-safety { border-color: #48bb7833; background: #48bb7808; }
+    .badge-safety .badge-label { color: var(--success); }
+    .badge-safety .badge-bar-fill { background: var(--success); }
+
+    .badge-road   { border-color: #fc818133; background: #fc818108; }
+    .badge-road   .badge-label { color: var(--danger); }
+    .badge-road   .badge-bar-fill { background: var(--danger); }
+
+    .stat-explain {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      color: var(--muted);
+      padding: 0 20px 14px;
+      line-height: 1.6;
+      display: none;
+    }
+    .stat-explain.visible { display: block; }
   </style>
 </head>
 <body>
@@ -376,6 +443,8 @@
   <button class="btn-generate" id="gen-btn" onclick="generateRoutes()">Generate Routes</button>
   <div id="status"></div>
   <div class="route-tabs" id="route-tabs"></div>
+  <div class="route-stats-grid" id="route-stats-grid"></div>
+  <div class="stat-explain"     id="stat-explain"></div>
 </aside>
 
 <main>
@@ -506,12 +575,11 @@
     document.querySelectorAll('.route-tab').forEach((t, i) => {
       t.classList.toggle('active', i === idx);
     });
-
     const r = allRoutes[idx];
     document.getElementById('hdr-type').textContent = r.route_type.replace(/-/g, ' ');
     document.getElementById('hdr-dist').textContent = `${r.distance_mi} mi`;
     document.getElementById('hdr-elev').textContent = `${r.elevation_gain_ft} ft`;
-
+    renderStatBadges(r);   // ← add this line
     renderMap(r);
   }
 
@@ -539,6 +607,49 @@
     });
   }
 
+  function renderStatBadges(r) {
+    const s     = r.stats;
+    const grid  = document.getElementById('route-stats-grid');
+    const expl  = document.getElementById('stat-explain');
+    if (!s) { grid.classList.remove('visible'); expl.classList.remove('visible'); return; }
+
+    // normalise to 0–100 for bar widths (rough scale)
+    const trailW  = Math.min(s.trail_pct, 100);
+    const elevW   = Math.min(s.elev_cost  / 5  * 100, 100);
+    const safeW   = Math.max(0, 100 - Math.min(s.safety_cost / 10 * 100, 100)); // invert: lower = safer
+    const roadW   = Math.max(0, 100 - Math.min(s.road_penalty / 5 * 100, 100)); // invert: lower = better
+
+    grid.innerHTML = `
+      <div class="stat-badge badge-trail">
+        <div class="badge-label">🌿 Trail Coverage</div>
+        <div class="badge-val">${s.trail_pct}%</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${trailW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-elev">
+        <div class="badge-label">⛰ Elevation Load</div>
+        <div class="badge-val">${r.elevation_gain_ft} ft</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${elevW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-safety">
+        <div class="badge-label">🛡 Safety Score</div>
+        <div class="badge-val">${safeW < 40 ? 'Low' : safeW < 70 ? 'Med' : 'High'}</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${safeW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-road">
+        <div class="badge-label">🚗 Road Avoidance</div>
+        <div class="badge-val">${roadW < 40 ? 'Low' : roadW < 70 ? 'Med' : 'High'}</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${roadW}%"></div></div>
+      </div>`;
+
+    // generate explanation sentence
+    const trailNote = s.trail_pct > 50 ? `${s.trail_pct}% of this route is on trails` : `mostly road-based (${s.trail_pct}% trail)`;
+    const elevNote  = r.elevation_gain_ft < 100 ? 'minimal elevation' : r.elevation_gain_ft < 300 ? 'moderate hills' : 'significant climbing';
+    const safeNote  = safeW >= 70 ? 'high safety rating' : safeW >= 40 ? 'moderate safety' : 'lower safety rating';
+    expl.textContent = `This route was selected because it is ${trailNote}, with ${elevNote} and a ${safeNote} — best matching your preference weights.`;
+
+    grid.classList.add('visible');
+    expl.classList.add('visible');
+  }
   function renderMap(route) {
     const coords = route.geometry;
     document.getElementById('map-empty').style.display = 'none';
