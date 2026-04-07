@@ -493,6 +493,47 @@ def _diverse_top_n(scored_routes, n=5, min_diversity=0.5):
 
     return results
 
+def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
+    """Computes per-route scoring breakdown for UI display."""
+    total_road_penalty  = 0.0
+    total_trail_bonus   = 0.0
+    total_elev_cost     = 0.0
+    total_safety        = 0.0
+    total_length        = 0.0
+    trail_edges         = 0
+    total_edges         = 0
+
+    for u, v in zip(path[:-1], path[1:]):
+        edge_data = min(G[u][v].values(), key=lambda d: d.get("length", 1.0))
+        length    = float(edge_data.get("length", 1.0))
+        hw        = edge_data.get("highway", "unclassified")
+        if isinstance(hw, list):
+            hw = hw[0] if hw else "unclassified"
+        hw = str(hw)
+
+        trail_types = {'footway','path','cycleway','steps','pedestrian','track','bridleway'}
+        type_cat    = 'trail' if hw in trail_types else 'road'
+        alpha       = get_trail_alpha(prefs.get("trail_preference", "normal"))
+        grade       = float(edge_data.get("grade", 0.0))
+
+        total_road_penalty += road_penalty(hw, length, mean_edge_length)
+        total_trail_bonus  += abs(trail_bonus(type_cat, length, mean_edge_length, alpha))
+        total_elev_cost    += elevation_cost(grade, 0.5, 2.0, length, 0.05)
+        total_safety       += safety_score(edge_data)
+        total_length       += length
+        if type_cat == 'trail':
+            trail_edges += 1
+        total_edges += 1
+
+    trail_pct = round(100 * trail_edges / max(total_edges, 1))
+
+    return {
+        "trail_pct":      trail_pct,
+        "elev_cost":      round(total_elev_cost, 1),
+        "safety_cost":    round(total_safety, 1),
+        "road_penalty":   round(total_road_penalty, 1),
+        "trail_bonus":    round(total_trail_bonus, 1),
+    }
 
 # ---------------------------------------------------------------------------
 # 4.  ROUTING STRATEGIES
@@ -532,8 +573,86 @@ def generate_basic_route(
         "geometry":          path_to_coords(G, path),
         "distance_mi":       m_to_mi(path_length_m(G, path)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+        "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
 
+# Note: Added point A to point B
+def generate_point_to_point(
+    G: nx.MultiDiGraph,
+    start_lat: float, start_lon: float,
+    end_lat: float, end_lon: float,
+    target_m: float,
+    prefs: dict,
+) -> dict:
+    """
+    Route from A to B with a target distance constraint.
+    Ensures distance >= shortest path and tries to match target distance.
+    """
+    H = get_cost_graph(G, prefs)
+    s = snap_to_node(G, start_lat, start_lon)
+    e = snap_to_node(G, end_lat, end_lon)
+
+    # Shortest path
+    shortest_path = dijkstra(H, s, e)
+    if not shortest_path:
+        raise ValueError("No route found between the two points.")
+    shortest_len = path_length_m(G, shortest_path)
+    if target_m < shortest_len:
+        raise ValueError(
+            f"Requested distance ({m_to_mi(target_m)} mi) is shorter than the shortest possible route ({m_to_mi(shortest_len)} mi)."
+        )
+    
+    candidates = []
+
+    # Always include shortest path
+    candidates.append((abs(shortest_len - target_m), shortest_path))
+
+    # Generate detour routes via waypoints
+    midpoint_lat = (start_lat + end_lat) / 2
+    midpoint_lon = (start_lon + end_lon) / 2
+
+    radius = target_m / 2
+    waypoint_pool = nodes_within_radius(midpoint_lat, midpoint_lon, radius)
+
+    for wp in random.sample(waypoint_pool, min(30, len(waypoint_pool))):
+        path1 = dijkstra(H, s, wp)
+        path2 = dijkstra(H, wp, e)
+
+        if not path1 or not path2:
+            continue
+
+        full = [_flat(n) for n in path1] + [_flat(n) for n in path2][1:]
+        total_len = path_length_m(G, full)
+
+        # Must be >= shortest path
+        if total_len < shortest_len:
+            continue
+
+        # Keep near target distance (±20%)
+        if abs(total_len - target_m) > target_m * 0.2:
+            continue
+
+        err = abs(total_len - target_m)
+        candidates.append((err, full))
+
+    if not candidates:
+        raise ValueError("Could not generate a route matching the requested distance.")
+
+    # Sort + diversify
+    candidates.sort(key=lambda x: x[0])
+    diverse = _diverse_top_n(candidates, n=5, min_diversity=0.5)
+
+    return {
+        "routes": [{
+            "route_type": "point-to-point-distance",
+            "geometry": path_to_coords(G, path),
+            "distance_mi": m_to_mi(path_length_m(G, path)),
+            "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+            "stats": compute_route_stats(G, path, prefs),
+        } for path in diverse],
+        "shortest_distance_mi": m_to_mi(shortest_len),
+        "target_distance_mi": m_to_mi(target_m),
+    }
 
 def generate_out_and_back(
     G: nx.MultiDiGraph,
@@ -576,6 +695,7 @@ def generate_out_and_back(
         "geometry":          path_to_coords(G, full),
         "distance_mi":       m_to_mi(path_length_m(G, full)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, full)),
+        "stats": compute_route_stats(G, prefs), # Note: removed "path" as it is not defined
     } for full in diverse]}
 
 
@@ -653,6 +773,7 @@ def generate_loop(
         "geometry":          path_to_coords(G, route),
         "distance_mi":       m_to_mi(path_length_m(G, route)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, route)),
+        "stats": compute_route_stats(G, route, prefs),
     } for route in diverse]}
 
 
@@ -730,6 +851,7 @@ def generate_random_explore(
         "geometry":          path_to_coords(G, path),
         "distance_mi":       m_to_mi(path_length_m(G, path)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+        "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
 
 
@@ -769,6 +891,11 @@ SHARED_DESC = """
 - **trail_preference** — "none" | "normal" | "high"
 """
 def geocode_address(address: str) -> tuple[float, float]:
+    # Note: Added case-insensitive "Philadelphia" check
+    address = address.lower()
+    if "philadelphia" not in address:
+        raise ValueError('Address must be in Philadelphia. Please include "Philadelphia" in the address.')
+    # Note: below are same as before
     try:
         location = geolocator.geocode(address, timeout=10)
     except (GeocoderTimedOut, GeocoderServiceError) as e:
@@ -809,6 +936,50 @@ def basic_route(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+# Note: Added this part below
+@app.get("/route/point-to-point", summary="Point-to-point route with distance constraint", description=SHARED_DESC)
+def point_to_point(
+    distance: float,
+    address: str = None,
+    end_address: str = None,
+    start_lat: float = None,
+    start_lon: float = None,
+    end_lat: float = None,
+    end_lon: float = None,
+    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
+    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+):
+    # Resolve start
+    try:
+        if address:
+            start_lat, start_lon = geocode_address(address)
+        elif start_lat is None or start_lon is None:
+            raise HTTPException(400, "Provide start via 'address' or lat/lon.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Resolve end
+    try:
+        if end_address:
+            end_lat, end_lon = geocode_address(end_address)
+        elif end_lat is None or end_lon is None:
+            raise HTTPException(400, "Provide end via 'end_address' or lat/lon.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+
+    try:
+        return generate_point_to_point(
+            G,
+            start_lat, start_lon,
+            end_lat, end_lon,
+            mi_to_m(distance),
+            prefs
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+# Note: Added this part above
 
 @app.get("/route/out-and-back", summary="Out-and-back route", description=SHARED_DESC)
 def out_and_back(
