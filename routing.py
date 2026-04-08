@@ -2,10 +2,10 @@
 routing.py  —  Running Route Recommendation System  —  Team 26
 ==============================================================
 Four FastAPI endpoints:
-    GET /route/basic          — single path toward a target node
-    GET /route/out-and-back   — go out, come back the same way
-    GET /route/loop           — return via a different path
-    GET /route/random         — exploratory wandering route
+    GET /route/point to point         — single path toward a target node
+    GET /route/out-and-back           — go out, come back the same way
+    GET /route/loop                   — return via a different path
+    GET /route/random                 — exploratory wandering route
 
 Scoring functions (road_penalty, trail_bonus, elevation_cost, safety_score)
 taken from route_recommender_draft.py.
@@ -338,7 +338,8 @@ def path_to_coords(G: nx.MultiDiGraph, path: list[int]) -> list[list[float]]:
     return [[G.nodes[n]["y"], G.nodes[n]["x"]] for n in path]
 
 
-def dijkstra(H: nx.MultiDiGraph, src: int, dst: int) -> list[int] | None:
+from typing import List, Optional
+def dijkstra(H: nx.MultiDiGraph, src: int, dst: int) -> Optional[List[int]]: # Note: Changed here
     try:
         return nx.shortest_path(H, src, dst, weight="cost")
     except (nx.NetworkXNoPath, nx.NodeNotFound):
@@ -538,42 +539,82 @@ def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
 # 4.  ROUTING STRATEGIES
 # ---------------------------------------------------------------------------
 
-def generate_basic_route(
+def generate_point_to_point(
     G: nx.MultiDiGraph,
     start_lat: float, start_lon: float,
-    distance_m: float,
+    end_lat: float, end_lon: float,
+    target_m: float,
     prefs: dict,
 ) -> dict:
-    """Tries 8 compass directions, returns top 5 most distinct routes."""
+    """
+    Route from A to B with a target distance constraint.
+    Ensures distance >= shortest path and tries to match target distance.
+    """
     H = get_cost_graph(G, prefs)
     s = snap_to_node(G, start_lat, start_lon)
+    e = snap_to_node(G, end_lat, end_lon)
 
-    directions_deg = [0, 45, 90, 135, 180, 225, 270, 315]
-    scored = []
-    for bearing in directions_deg:
-        rad        = math.radians(bearing)
-        lat_offset = math.cos(rad) * distance_m / 111_320
-        lon_offset = math.sin(rad) * distance_m / (111_320 * math.cos(math.radians(start_lat)))
-        target     = snap_to_node(G, start_lat + lat_offset, start_lon + lon_offset)
-        path       = dijkstra(H, s, target)
-        if not path:
+    # Shortest path
+    shortest_path = dijkstra(H, s, e)
+    if not shortest_path:
+        raise ValueError("No route found between the two points.")
+    shortest_len = path_length_m(G, shortest_path)
+    if target_m < shortest_len:
+        raise ValueError(
+            f"Requested distance ({m_to_mi(target_m)} mi) is shorter than the shortest possible route ({m_to_mi(shortest_len)} mi)."
+        )
+    
+    candidates = []
+
+    # Always include shortest path
+    candidates.append((abs(shortest_len - target_m), shortest_path))
+
+    # Generate detour routes via waypoints
+    midpoint_lat = (start_lat + end_lat) / 2
+    midpoint_lon = (start_lon + end_lon) / 2
+
+    radius = target_m / 2
+    waypoint_pool = nodes_within_radius(midpoint_lat, midpoint_lon, radius)
+
+    for wp in random.sample(waypoint_pool, min(30, len(waypoint_pool))):
+        path1 = dijkstra(H, s, wp)
+        path2 = dijkstra(H, wp, e)
+
+        if not path1 or not path2:
             continue
-        err = abs(path_length_m(G, path) - distance_m)
-        scored.append((err, path))
 
-    if not scored:
-        raise ValueError("No path found.")
+        full = [_flat(n) for n in path1] + [_flat(n) for n in path2][1:]
+        total_len = path_length_m(G, full)
 
-    scored.sort(key=lambda x: x[0])
-    diverse = _diverse_top_n([(s, p) for s, p in scored], n=5, min_diversity=0.5)
+        # Must be >= shortest path
+        if total_len < shortest_len:
+            continue
 
-    return {"routes": [{
-        "route_type":        "basic",
-        "geometry":          path_to_coords(G, path),
-        "distance_mi":       m_to_mi(path_length_m(G, path)),
-        "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
-        "stats": compute_route_stats(G, path, prefs),
-    } for path in diverse]}
+        # Keep near target distance (±20%)
+        if abs(total_len - target_m) > target_m * 0.2:
+            continue
+
+        err = abs(total_len - target_m)
+        candidates.append((err, full))
+
+    if not candidates:
+        raise ValueError("Could not generate a route matching the requested distance.")
+
+    # Sort + diversify
+    candidates.sort(key=lambda x: x[0])
+    diverse = _diverse_top_n(candidates, n=5, min_diversity=0.5)
+
+    return {
+        "routes": [{
+            "route_type": "point-to-point-distance",
+            "geometry": path_to_coords(G, path),
+            "distance_mi": m_to_mi(path_length_m(G, path)),
+            "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
+            "stats": compute_route_stats(G, path, prefs),
+        } for path in diverse],
+        "shortest_distance_mi": m_to_mi(shortest_len),
+        "target_distance_mi": m_to_mi(target_m),
+    }
 
 
 def generate_out_and_back(
@@ -617,7 +658,7 @@ def generate_out_and_back(
         "geometry":          path_to_coords(G, full),
         "distance_mi":       m_to_mi(path_length_m(G, full)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, full)),
-        "stats": compute_route_stats(G, path, prefs),
+        "stats": compute_route_stats(G, full, prefs),
     } for full in diverse]}
 
 
@@ -813,6 +854,11 @@ SHARED_DESC = """
 - **trail_preference** — "none" | "normal" | "high"
 """
 def geocode_address(address: str) -> tuple[float, float]:
+     # Note: Added case-insensitive "Philadelphia" check
+    address = address.lower()
+    if "philadelphia" not in address:
+        raise ValueError('Address must be in Philadelphia. Please include "Philadelphia" in the address.')
+    # Note: below are same as before
     try:
         location = geolocator.geocode(address, timeout=10)
     except (GeocoderTimedOut, GeocoderServiceError) as e:
@@ -823,43 +869,73 @@ def geocode_address(address: str) -> tuple[float, float]:
 
 def _build_prefs(
     w_length: float, w_elev: float, w_safe: float,
-    w_road: float, w_trail: float, trail_preference: str,
+    w_road: float, w_trail: float,
 ) -> dict:
+    # derive trail_preference automatically from w_trail weight
+    if w_trail <= 0.7:
+        trail_preference = "none"
+    elif w_trail <= 1.3:
+        trail_preference = "normal"
+    else:
+        trail_preference = "high"
+
     return dict(
         w_length=w_length, w_elev=w_elev, w_safe=w_safe,
-        w_road=w_road, w_trail=w_trail, trail_preference=trail_preference,
+        w_road=w_road, w_trail=w_trail,
+        trail_preference=trail_preference,
     )
 
-
-@app.get("/route/basic", summary="Single-path route", description=SHARED_DESC)
-def basic_route(
+# Note: Added this part below
+@app.get("/route/point-to-point", summary="Point-to-point route with distance constraint", description=SHARED_DESC)
+def point_to_point(
     distance: float,
-    address: str = None,          # ← new: plain text address
+    address: str = None,
+    end_address: str = None,
+    start_lat: float = None,
+    start_lon: float = None,
+    end_lat: float = None,
+    end_lon: float = None,
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
-    # resolve address OR lat/lon
-    if address:
-        try:
-            start_lat, start_lon = geocode_address(address)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    elif start_lat is None or start_lon is None:
-        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
-
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    # Resolve start
     try:
-        return generate_basic_route(G, start_lat, start_lon, mi_to_m(distance), prefs)
+        if address:
+            start_lat, start_lon = geocode_address(address)
+        elif start_lat is None or start_lon is None:
+            raise HTTPException(400, "Provide start via 'address' or lat/lon.")
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # Resolve end
+    try:
+        if end_address:
+            end_lat, end_lon = geocode_address(end_address)
+        elif end_lat is None or end_lon is None:
+            raise HTTPException(400, "Provide end via 'end_address' or lat/lon.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
+
+    try:
+        return generate_point_to_point(
+            G,
+            start_lat, start_lon,
+            end_lat, end_lon,
+            mi_to_m(distance),
+            prefs
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+# Note: Added this part above
 
 @app.get("/route/out-and-back", summary="Out-and-back route", description=SHARED_DESC)
 def out_and_back(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -870,7 +946,7 @@ def out_and_back(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_out_and_back(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -882,7 +958,7 @@ def loop_route(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -893,7 +969,7 @@ def loop_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_loop(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -905,7 +981,7 @@ def random_route(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -916,7 +992,7 @@ def random_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
