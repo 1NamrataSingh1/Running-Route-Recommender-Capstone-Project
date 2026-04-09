@@ -2,16 +2,16 @@
 routing.py  —  Running Route Recommendation System  —  Team 26
 ==============================================================
 Four FastAPI endpoints:
-    GET /route/basic          — single path toward a target node
-    GET /route/out-and-back   — go out, come back the same way
-    GET /route/loop           — return via a different path
-    GET /route/random         — exploratory wandering route
+    GET /route/point to point         — single path toward a target node
+    GET /route/out-and-back           — go out, come back the same way
+    GET /route/loop                   — return via a different path
+    GET /route/random                 — exploratory wandering route
 
 Scoring functions (road_penalty, trail_bonus, elevation_cost, safety_score)
 taken from route_recommender_draft.py.
 
 Install:
-    pip install fastapi uvicorn osmnx networkx scipy pydantic pandas numpy geopy
+    pip install fastapi uvicorn osmnx networkx scipy pydantic pandas numpy
 
 Run:
     uvicorn routing:app --reload
@@ -337,7 +337,7 @@ def path_elevation_gain_m(G: nx.MultiDiGraph, path: list[int]) -> float:
 def path_to_coords(G: nx.MultiDiGraph, path: list[int]) -> list[list[float]]:
     return [[G.nodes[n]["y"], G.nodes[n]["x"]] for n in path]
 
-# Note: Added this import
+
 from typing import List, Optional
 def dijkstra(H: nx.MultiDiGraph, src: int, dst: int) -> Optional[List[int]]: # Note: Changed here
     try:
@@ -539,44 +539,6 @@ def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
 # 4.  ROUTING STRATEGIES
 # ---------------------------------------------------------------------------
 
-def generate_basic_route(
-    G: nx.MultiDiGraph,
-    start_lat: float, start_lon: float,
-    distance_m: float,
-    prefs: dict,
-) -> dict:
-    """Tries 8 compass directions, returns top 5 most distinct routes."""
-    H = get_cost_graph(G, prefs)
-    s = snap_to_node(G, start_lat, start_lon)
-
-    directions_deg = [0, 45, 90, 135, 180, 225, 270, 315]
-    scored = []
-    for bearing in directions_deg:
-        rad        = math.radians(bearing)
-        lat_offset = math.cos(rad) * distance_m / 111_320
-        lon_offset = math.sin(rad) * distance_m / (111_320 * math.cos(math.radians(start_lat)))
-        target     = snap_to_node(G, start_lat + lat_offset, start_lon + lon_offset)
-        path       = dijkstra(H, s, target)
-        if not path:
-            continue
-        err = abs(path_length_m(G, path) - distance_m)
-        scored.append((err, path))
-
-    if not scored:
-        raise ValueError("No path found.")
-
-    scored.sort(key=lambda x: x[0])
-    diverse = _diverse_top_n([(s, p) for s, p in scored], n=5, min_diversity=0.5)
-
-    return {"routes": [{
-        "route_type":        "basic",
-        "geometry":          path_to_coords(G, path),
-        "distance_mi":       m_to_mi(path_length_m(G, path)),
-        "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
-        "stats": compute_route_stats(G, path, prefs),
-    } for path in diverse]}
-
-# Note: Added point A to point B
 def generate_point_to_point(
     G: nx.MultiDiGraph,
     start_lat: float, start_lon: float,
@@ -644,7 +606,7 @@ def generate_point_to_point(
 
     return {
         "routes": [{
-            "route_type": "point-to-point-distance",
+            "route_type": "point-to-point",
             "geometry": path_to_coords(G, path),
             "distance_mi": m_to_mi(path_length_m(G, path)),
             "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
@@ -653,6 +615,7 @@ def generate_point_to_point(
         "shortest_distance_mi": m_to_mi(shortest_len),
         "target_distance_mi": m_to_mi(target_m),
     }
+
 
 def generate_out_and_back(
     G: nx.MultiDiGraph,
@@ -695,7 +658,7 @@ def generate_out_and_back(
         "geometry":          path_to_coords(G, full),
         "distance_mi":       m_to_mi(path_length_m(G, full)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, full)),
-        "stats": compute_route_stats(G, prefs), # Note: removed "path" as it is not defined
+        "stats": compute_route_stats(G, full, prefs),
     } for full in diverse]}
 
 
@@ -891,7 +854,7 @@ SHARED_DESC = """
 - **trail_preference** — "none" | "normal" | "high"
 """
 def geocode_address(address: str) -> tuple[float, float]:
-    # Note: Added case-insensitive "Philadelphia" check
+     # Note: Added case-insensitive "Philadelphia" check
     address = address.lower()
     if "philadelphia" not in address:
         raise ValueError('Address must be in Philadelphia. Please include "Philadelphia" in the address.')
@@ -906,35 +869,21 @@ def geocode_address(address: str) -> tuple[float, float]:
 
 def _build_prefs(
     w_length: float, w_elev: float, w_safe: float,
-    w_road: float, w_trail: float, trail_preference: str,
+    w_road: float, w_trail: float,
 ) -> dict:
+    # derive trail_preference automatically from w_trail weight
+    if w_trail <= 0.7:
+        trail_preference = "none"
+    elif w_trail <= 1.3:
+        trail_preference = "normal"
+    else:
+        trail_preference = "high"
+
     return dict(
         w_length=w_length, w_elev=w_elev, w_safe=w_safe,
-        w_road=w_road, w_trail=w_trail, trail_preference=trail_preference,
+        w_road=w_road, w_trail=w_trail,
+        trail_preference=trail_preference,
     )
-
-
-@app.get("/route/basic", summary="Single-path route", description=SHARED_DESC)
-def basic_route(
-    distance: float,
-    address: str = None,          # ← new: plain text address
-    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
-):
-    # resolve address OR lat/lon
-    if address:
-        try:
-            start_lat, start_lon = geocode_address(address)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-    elif start_lat is None or start_lon is None:
-        raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
-
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
-    try:
-        return generate_basic_route(G, start_lat, start_lon, mi_to_m(distance), prefs)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 # Note: Added this part below
 @app.get("/route/point-to-point", summary="Point-to-point route with distance constraint", description=SHARED_DESC)
@@ -947,7 +896,7 @@ def point_to_point(
     end_lat: float = None,
     end_lon: float = None,
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # Resolve start
     try:
@@ -967,7 +916,7 @@ def point_to_point(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
 
     try:
         return generate_point_to_point(
@@ -986,7 +935,7 @@ def out_and_back(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -997,7 +946,7 @@ def out_and_back(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_out_and_back(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -1009,7 +958,7 @@ def loop_route(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -1020,7 +969,7 @@ def loop_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_loop(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -1032,7 +981,7 @@ def random_route(
     distance: float,
     address: str = None,          # ← new: plain text address
     w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
-    w_road: float = 0.8, w_trail: float = 0.8, trail_preference: str = "normal",
+    w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
     if address:
@@ -1043,7 +992,7 @@ def random_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail, trail_preference)
+    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
     try:
         return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:

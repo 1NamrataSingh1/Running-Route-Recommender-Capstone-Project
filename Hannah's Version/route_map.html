@@ -369,6 +369,9 @@
     <div class="field" id="end-address-field" style="display:none">
       <label>End Address</label>
       <input type="text" id="end_address" placeholder="e.g. 30th St Station, Philadelphia, PA"/>
+      <div style="font-family: var(--mono); font-size: 0.6rem; color: var(--muted); margin-top: 4px;">
+        ⚠ Route distance must not exceed the distance field above.
+      </div>
     </div>
     <!-- Note: Added the section above -->
     <div class="field">
@@ -382,7 +385,6 @@
     <div class="field">
       <label>Type</label>
       <select id="route_type">
-        <option value="basic">Basic (one-way)</option>
         <option value="point-to-point">Point to Point</option> <!-- Note: Added -->
         <option value="out-and-back">Out and Back</option>
         <option value="loop" selected>Loop</option>
@@ -393,18 +395,6 @@
       <label>Randomness Level <span id="rand-val">0.5</span></label>
       <input type="range" id="randomness_level" min="0" max="1" step="0.05" value="0.5"
              oninput="document.getElementById('rand-val').textContent=parseFloat(this.value).toFixed(2)"/>
-    </div>
-  </div>
-
-  <div class="form-section">
-    <div class="form-section-title">Trail Preference</div>
-    <div class="field">
-      <label>Preference</label>
-      <select id="trail_preference">
-        <option value="none">None — avoid trails</option>
-        <option value="normal" selected>Normal</option>
-        <option value="high">High — seek trails</option>
-      </select>
     </div>
   </div>
 
@@ -487,7 +477,7 @@
     w_trail:  { id: 'w_trail',  val: 0.8, display: 'wt-val' },
   };
 
-  // Note: Edited the section below
+   // Note: Edited the section below
   // document.getElementById('route_type').addEventListener('change', function () {
   //   document.getElementById('randomness-field').style.display =
   //     this.value === 'random' ? 'block' : 'none';
@@ -529,13 +519,11 @@
     const ws   = document.getElementById('w_safe').value;
     const wr   = document.getElementById('w_road').value;
     const wt   = document.getElementById('w_trail').value;
-    const tp   = document.getElementById('trail_preference').value;
     const rl   = document.getElementById('randomness_level').value;
     const type = document.getElementById('route_type').value;
 
     let params = `address=${address}&distance=${dist}` +
-                 `&w_length=${wl}&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}` +
-                 `&trail_preference=${tp}`;
+                 `&w_length=${wl}&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}`
     if (type === 'random') params += `&randomness_level=${rl}`;
     if (type === 'point-to-point') params += `&end_address=${end_address}`; // Note: Added this
     return `${API}/route/${type}?${params}`;
@@ -545,7 +533,7 @@
     const btn    = document.getElementById('gen-btn');
     const status = document.getElementById('status');
 
-// Note: Added the part below
+  // Note: Added the part below
     const type = document.getElementById('route_type').value;
     if (type === 'point-to-point') {
       const endAddr = document.getElementById('end_address').value.trim();
@@ -554,12 +542,15 @@
         return;
       }
     }
-// Note: Added the part above
+  // Note: Added the part above
 
     btn.disabled = true;
+    status.style.display = ''; 
     status.className = 'loading';
     status.textContent = '⟳  Generating routes — this may take 10–30 s…';
     document.getElementById('route-tabs').classList.remove('visible');
+    document.getElementById('route-stats-grid').classList.remove('visible');  
+    document.getElementById('stat-explain').classList.remove('visible');
 
     try {
       const resp = await fetch(buildQuery());
