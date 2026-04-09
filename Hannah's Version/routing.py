@@ -684,8 +684,8 @@ def generate_loop(
 
     # Sector-based candidates: 8 directions × 3 nodes each = up to 24 candidates,
     # guaranteed to be spread around the compass
-    candidates = candidates_by_sector(G, s, distance_m / 2, epsilon_m=600,
-                                      n_sectors=8, per_sector=3)
+    candidates = candidates_by_sector(G, s, distance_m / 3, epsilon_m=600,
+                                      n_sectors=8, per_sector=3) # change "distance_m / 2" to "distance_m / 3"
     if not candidates:
         raise ValueError("No loop waypoint candidates found. Try a longer distance.")
 
