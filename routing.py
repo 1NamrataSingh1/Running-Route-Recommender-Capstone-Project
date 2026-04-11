@@ -385,9 +385,9 @@ def candidates_by_sector(
     G: nx.MultiDiGraph,
     origin: int,
     target_m: float,
-    epsilon_m: float = 500,
+    epsilon_m: float = 250, # changed from 500 to 250
     n_sectors: int = 8,
-    per_sector: int = 3,
+    per_sector: int = 4, # changed from 4 to 3
 ) -> list[int]:
     """
     Returns candidates spread across n_sectors compass directions from origin.
@@ -401,6 +401,10 @@ def candidates_by_sector(
     """
     olat, olon = node_latlon(G, origin)
 
+    # Apply a 1.15 circuity factor: straight-line distance should be 
+    # slightly less than the target walking distance.
+    adjusted_target = target_m / 1.15
+    
     # Bounding box pre-filter using numpy arrays
     lat_deg = (target_m + epsilon_m) / 111_320
     lon_deg = (target_m + epsilon_m) / (111_320 * math.cos(math.radians(olat)))
@@ -420,7 +424,7 @@ def candidates_by_sector(
         nlat = float(_node_lats[idx])
         nlon = float(_node_lons[idx])
         d    = haversine_m(olat, olon, nlat, nlon)
-        if abs(d - target_m) > epsilon_m:
+        if abs(d - adjusted_target) > epsilon_m:
             continue
 
         # Bearing from origin to this node (0=North, 90=East, 180=South, 270=West)
@@ -606,7 +610,7 @@ def generate_point_to_point(
 
     return {
         "routes": [{
-            "route_type": "point-to-point-distance",
+            "route_type": "point-to-point",
             "geometry": path_to_coords(G, path),
             "distance_mi": m_to_mi(path_length_m(G, path)),
             "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
@@ -630,9 +634,12 @@ def generate_out_and_back(
     H = get_cost_graph(G, prefs)
     s = snap_to_node(G, start_lat, start_lon)
 
-    # Use sector-based candidates so turnaround points are spread in all directions
-    candidates = candidates_by_sector(G, s, distance_m / 2, epsilon_m=500,
-                                      n_sectors=8, per_sector=3)
+    target_leg = (distance_m / 2) / 1.10 
+    
+    # ADJUSTMENT: Increased epsilon_m from 200 to 400.
+    # This gives the algorithm a wider "band" to find a valid street corner.
+    candidates = candidates_by_sector(G, s, target_leg, epsilon_m=400,
+                                      n_sectors=8, per_sector=4)
     if not candidates:
         raise ValueError("No turnaround candidates found. Try a longer distance.")
 
@@ -643,8 +650,12 @@ def generate_out_and_back(
             continue
         p_flat = [_flat(n) for n in p]
         full   = p_flat + list(reversed(p_flat[:-1]))
-        err    = abs(path_length_m(G, full) - distance_m)
-        scored.append((err, i, p_flat, full))
+        #added 
+        total_len = path_length_m(G, full)
+        # Only keep routes within 10% of target distance
+        if abs(total_len - distance_m) < (distance_m * 0.10):
+            err = abs(total_len - distance_m)
+            scored.append((err, i, p_flat, full))
 
     if not scored:
         raise ValueError("Could not build an out-and-back route.")
@@ -684,8 +695,8 @@ def generate_loop(
 
     # Sector-based candidates: 8 directions × 3 nodes each = up to 24 candidates,
     # guaranteed to be spread around the compass
-    candidates = candidates_by_sector(G, s, distance_m / 2, epsilon_m=600,
-                                      n_sectors=8, per_sector=3)
+    candidates = candidates_by_sector(G, s, distance_m / 3, epsilon_m=250,
+                                      n_sectors=8, per_sector=3) # change "distance_m / 2" to "distance_m / 3" + epsilon 600 to 250
     if not candidates:
         raise ValueError("No loop waypoint candidates found. Try a longer distance.")
 
@@ -719,11 +730,17 @@ def generate_loop(
         path_back_flat = [_flat(n) for n in path_back]
         full           = path_out_flat + path_back_flat[1:]
         total_len      = path_length_m(G, full)
+        # If distance is off by more than 15%, ignore it
+        if abs(total_len - distance_m) > (distance_m * 0.15): 
+            continue
         back_edges     = set(zip(path_back_flat[:-1], path_back_flat[1:]))
         overlap        = len(out_edges & back_edges) / max(len(out_edges), 1)
-
-        score = abs(total_len - distance_m) / distance_m + overlap * 2
+        # Multiplier of 10 for distance error makes it the primary priority
+        dist_error_ratio = abs(total_len - distance_m) / distance_m
+        score = (dist_error_ratio * 15) + (overlap * 2) #changed from 10 to 15
         scored.append((score, i, full))
+
+       
 
     if not scored:
         raise ValueError("Could not build a loop route.")
@@ -755,7 +772,7 @@ def generate_random_explore(
     s      = snap_to_node(G, start_lat, start_lon)
     s_lat, s_lon = node_latlon(G, s)
 
-    radius_m  = distance_m / 3 * (1 + randomness_level)
+    radius_m  = (distance_m / 3) / 1.15
     tolerance = 0.15
     max_wps   = max(10, int(25 * randomness_level))
 
@@ -774,8 +791,13 @@ def generate_random_explore(
         current    = s
 
         for wp in wp_sample:
-            if wp == current:
-                continue
+            # added Calculate distance back to start (with 15% buffer for street winding)
+            dist_to_home = haversine_m(*node_latlon(G, current), s_lat, s_lon) * 1.15
+            
+            # added If we've reached 90% of our budget, head home now
+            if cumulative + dist_to_home >= distance_m * 0.90:
+                break
+
             seg = dijkstra(H_exp, current, wp)
             if not seg:
                 continue
