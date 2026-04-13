@@ -218,7 +218,9 @@ def safety_score(edge, alpha_speed=0.02, alpha_sidewalk=2.0, alpha_lanes=0.1):
             pass
 
     base_risk = speed_factor * (alpha_sidewalk * sidewalk_factor) * lane_factor
-    return base_risk * (length / 100.0)
+    raw = base_risk * (length / 100.0)
+    # Invert so that a HIGH value means SAFER (0 = dangerous, 1 = very safe)
+    return 1.0 / (1.0 + raw)
 
 
 def edge_cost(edge_data: dict, prefs: dict) -> float:
@@ -253,7 +255,7 @@ def edge_cost(edge_data: dict, prefs: dict) -> float:
     cost = (
         w_length * length
         + w_elev * e_cost
-        + w_safe * s_score
+        - w_safe * s_score   # subtract: higher safety score = lower cost = preferred
         + w_road * r_pen
         + w_trail * t_bonus
     )
@@ -530,13 +532,33 @@ def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
         total_edges += 1
 
     trail_pct = round(100 * trail_edges / max(total_edges, 1))
+    avg_safety = round(total_safety / max(total_edges, 1), 3)  # 0–1, higher = safer
 
+    if avg_safety >= 0.70:
+        safety_level = "High"
+    elif avg_safety >= 0.40:
+        safety_level = "Normal"
+    else:
+        safety_level = "Medium"
+
+    avg_road_penalty = total_road_penalty / max(total_edges, 1)
+    road_avoidance_score = round(1.0 / (1.0 + avg_road_penalty), 3)  # 0–1, higher = avoids roads better
+
+    if road_avoidance_score >= 0.70:
+        road_level = "High"
+    elif road_avoidance_score >= 0.40:
+        road_level = "Normal"
+    else:
+        road_level = "Medium"
     return {
         "trail_pct":      trail_pct,
         "elev_cost":      round(total_elev_cost, 1),
-        "safety_cost":    round(total_safety, 1),
+        "safety_score":   avg_safety,
+        "safety_level":   safety_level,
         "road_penalty":   round(total_road_penalty, 1),
         "trail_bonus":    round(total_trail_bonus, 1),
+        "road_avoidance_score": road_avoidance_score,
+        "road_level":           road_level,
     }
 
 # ---------------------------------------------------------------------------

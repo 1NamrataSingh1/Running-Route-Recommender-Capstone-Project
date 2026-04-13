@@ -639,8 +639,11 @@
     // normalise to 0–100 for bar widths (rough scale)
     const trailW  = Math.min(s.trail_pct, 100);
     const elevW   = Math.min(s.elev_cost  / 5  * 100, 100);
-    const safeW   = Math.max(0, 100 - Math.min(s.safety_cost / 10 * 100, 100)); // invert: lower = safer
+    const safeW   = Math.round((s.safety_score ?? 0) * 100);  // already 0–1, high = safer
     const roadW   = Math.max(0, 100 - Math.min(s.road_penalty / 5 * 100, 100)); // invert: lower = better
+    const roadScore = Math.round((s.road_avoidance_score ?? 0) * 100);
+    const roadLevel = s.road_level ?? (roadW < 40 ? 'Low' : roadW < 70 ? 'Med' : 'High');
+    const safeLevel = s.safety_level ?? (safeW >= 70 ? 'High' : safeW >= 40 ? 'Normal' : 'Medium');
 
     grid.innerHTML = `
       <div class="stat-badge badge-trail">
@@ -655,19 +658,19 @@
       </div>
       <div class="stat-badge badge-safety">
         <div class="badge-label">🛡 Safety Score</div>
-        <div class="badge-val">${safeW < 40 ? 'Low' : safeW < 70 ? 'Med' : 'High'}</div>
+        <div class="badge-val">${safeW}<span style="font-size:0.6rem;opacity:0.7">/100</span> &nbsp;<span style="font-size:0.65rem;opacity:0.85">${safeLevel}</span></div>
         <div class="badge-bar"><div class="badge-bar-fill" style="width:${safeW}%"></div></div>
       </div>
       <div class="stat-badge badge-road">
-        <div class="badge-label">🚗 Road Avoidance</div>
-        <div class="badge-val">${roadW < 40 ? 'Low' : roadW < 70 ? 'Med' : 'High'}</div>
-        <div class="badge-bar"><div class="badge-bar-fill" style="width:${roadW}%"></div></div>
+        <div class="badge-label">🚗 Highway Avoidance</div>
+        <div class="badge-val">${roadScore}<span style="font-size:0.6rem;opacity:0.7">/100</span> &nbsp;<span style="font-size:0.65rem;opacity:0.85">${roadLevel}</span></div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${roadScore}%"></div></div>
       </div>`;
 
     // generate explanation sentence
     const trailNote = s.trail_pct > 50 ? `${s.trail_pct}% of this route is on trails` : `mostly road-based (${s.trail_pct}% trail)`;
     const elevNote  = r.elevation_gain_ft < 100 ? 'minimal elevation' : r.elevation_gain_ft < 300 ? 'moderate hills' : 'significant climbing';
-    const safeNote  = safeW >= 70 ? 'high safety rating' : safeW >= 40 ? 'moderate safety' : 'lower safety rating';
+    const safeNote  = safeLevel === 'High' ? 'high safety rating' : safeLevel === 'Normal' ? 'normal safety' : 'medium safety rating';
     expl.textContent = `This route was selected because it is ${trailNote}, with ${elevNote} and a ${safeNote} — best matching your preference weights.`;
 
     grid.classList.add('visible');
