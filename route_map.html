@@ -370,7 +370,7 @@
       <label>End Address</label>
       <input type="text" id="end_address" placeholder="e.g. 30th St Station, Philadelphia, PA"/>
       <div style="font-family: var(--mono); font-size: 0.6rem; color: var(--muted); margin-top: 4px;">
-        ⚠ Route distance must not exceed the distance field above.
+        ⚠ Route distance must not exceed the distance field below.
       </div>
     </div>
     <!-- Note: Added the section above -->
@@ -404,12 +404,6 @@
       <button class="btn-reset-weights" id="reset-weights-btn" onclick="resetWeights()">↺ Reset</button>
     </div>
     <div id="adv-weights">
-      <div class="field slider-field">
-        <label>Distance Precision Importance <span id="wl-val">1.0</span></label>
-        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
-        <input type="range" id="w_length" min="0" max="2" step="0.1" value="1.0"
-               oninput="document.getElementById('wl-val').textContent=parseFloat(this.value).toFixed(1)"/>
-      </div>
       <div class="field slider-field">
         <label>Elevation Importance (Prefer Flatter Routes) <span id="we-val">0.7</span></label>
         <div class="slider-range-labels"><span>Low</span><span>High</span></div>
@@ -470,7 +464,6 @@
   let allRoutes = [];
 
   const WEIGHT_DEFAULTS = {
-    w_length: { id: 'w_length', val: 1.0, display: 'wl-val' },
     w_elev:   { id: 'w_elev',   val: 0.7, display: 'we-val' },
     w_safe:   { id: 'w_safe',   val: 1.2, display: 'ws-val' },
     w_road:   { id: 'w_road',   val: 0.8, display: 'wr-val' },
@@ -514,7 +507,7 @@
     const endAddressInput = document.getElementById('end_address'); // Note: Added this
     const end_address = endAddressInput ? encodeURIComponent(endAddressInput.value.trim()) : ''; // Note: Added this
     const dist = document.getElementById('distance').value;
-    const wl   = document.getElementById('w_length').value;
+    //const wl   = document.getElementById('w_length').value; Removed weight length
     const we   = document.getElementById('w_elev').value;
     const ws   = document.getElementById('w_safe').value;
     const wr   = document.getElementById('w_road').value;
@@ -523,7 +516,7 @@
     const type = document.getElementById('route_type').value;
 
     let params = `address=${address}&distance=${dist}` +
-                 `&w_length=${wl}&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}`
+                 `&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}`
     if (type === 'random') params += `&randomness_level=${rl}`;
     if (type === 'point-to-point') params += `&end_address=${end_address}`; // Note: Added this
     return `${API}/route/${type}?${params}`;

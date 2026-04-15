@@ -912,7 +912,7 @@ def geocode_address(address: str) -> tuple[float, float]:
     return location.latitude, location.longitude
 
 def _build_prefs(
-    w_length: float, w_elev: float, w_safe: float,
+    w_elev: float, w_safe: float,
     w_road: float, w_trail: float,
 ) -> dict:
     # derive trail_preference automatically from w_trail weight
@@ -924,7 +924,7 @@ def _build_prefs(
         trail_preference = "high"
 
     return dict(
-        w_length=w_length, w_elev=w_elev, w_safe=w_safe,
+        w_length=1.0, w_elev=w_elev, w_safe=w_safe,
         w_road=w_road, w_trail=w_trail,
         trail_preference=trail_preference,
     )
@@ -939,7 +939,7 @@ def point_to_point(
     start_lon: float = None,
     end_lat: float = None,
     end_lon: float = None,
-    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
+    w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # Resolve start
@@ -960,7 +960,7 @@ def point_to_point(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
+    prefs = _build_prefs( w_elev, w_safe, w_road, w_trail)
 
     try:
         return generate_point_to_point(
@@ -978,7 +978,7 @@ def point_to_point(
 def out_and_back(
     distance: float,
     address: str = None,          # ← new: plain text address
-    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
+    w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
@@ -990,7 +990,7 @@ def out_and_back(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
+    prefs = _build_prefs(w_elev, w_safe, w_road, w_trail)
     try:
         return generate_out_and_back(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -1001,7 +1001,7 @@ def out_and_back(
 def loop_route(
     distance: float,
     address: str = None,          # ← new: plain text address
-    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
+    w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
@@ -1013,7 +1013,7 @@ def loop_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
+    prefs = _build_prefs(w_elev, w_safe, w_road, w_trail)
     try:
         return generate_loop(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
@@ -1024,7 +1024,7 @@ def loop_route(
 def random_route(
     distance: float,
     address: str = None,          # ← new: plain text address
-    w_length: float = 1.0, w_elev: float = 0.7, w_safe: float = 1.2,
+    w_elev: float = 0.7, w_safe: float = 1.2,
     w_road: float = 0.8, w_trail: float = 0.8,
 ):
     # resolve address OR lat/lon
@@ -1036,7 +1036,7 @@ def random_route(
     elif start_lat is None or start_lon is None:
         raise HTTPException(400, "Provide either 'address' or both 'start_lat' and 'start_lon'.")
 
-    prefs = _build_prefs(w_length, w_elev, w_safe, w_road, w_trail)
+    prefs = _build_prefs(w_elev, w_safe, w_road, w_trail)
     try:
         return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
