@@ -561,6 +561,46 @@ def compute_route_stats(G: nx.MultiDiGraph, path: list, prefs: dict) -> dict:
         "road_level":           road_level,
     }
 
+
+import os
+from datetime import datetime
+
+METRICS_PATH = "route_metrics.json"
+
+def log_route_metrics(route_type: str, routes: list, requested_distance_m: float):
+    """Appends per-request metrics to a JSON log file for later analysis."""
+    try:
+        # load existing log
+        if os.path.exists(METRICS_PATH):
+            with open(METRICS_PATH, "r") as f:
+                log = json.load(f)
+        else:
+            log = []
+
+        for r in routes:
+            actual_m    = r["distance_mi"] * M_PER_MILE
+            dist_error  = abs(actual_m - requested_distance_m) / requested_distance_m * 100
+            stats       = r.get("stats", {})
+
+            log.append({
+                "timestamp":        datetime.now().isoformat(),
+                "route_type":       route_type,
+                "requested_mi":     round(requested_distance_m / M_PER_MILE, 2),
+                "actual_mi":        r["distance_mi"],
+                "dist_error_pct":   round(dist_error, 2),
+                "elevation_ft":     r["elevation_gain_ft"],
+                "trail_pct":        stats.get("trail_pct", 0),
+                "safety_cost":      stats.get("safety_cost", 0),
+                "road_penalty":     stats.get("road_penalty", 0),
+            })
+
+        with open(METRICS_PATH, "w") as f:
+            json.dump(log, f, indent=2)
+
+    except Exception as e:
+        print(f"[metrics] Failed to log: {e}")
+
+
 # ---------------------------------------------------------------------------
 # 4.  ROUTING STRATEGIES
 # ---------------------------------------------------------------------------
@@ -630,8 +670,7 @@ def generate_point_to_point(
     candidates.sort(key=lambda x: x[0])
     diverse = _diverse_top_n(candidates, n=5, min_diversity=0.5)
 
-    return {
-        "routes": [{
+    result = {"routes": [{
             "route_type": "point-to-point",
             "geometry": path_to_coords(G, path),
             "distance_mi": m_to_mi(path_length_m(G, path)),
@@ -642,6 +681,8 @@ def generate_point_to_point(
         "target_distance_mi": m_to_mi(target_m),
     }
 
+    log_route_metrics("point-to-point", result["routes"], target_m)
+    return result
 
 def generate_out_and_back(
     G: nx.MultiDiGraph,
@@ -685,7 +726,7 @@ def generate_out_and_back(
     scored.sort(key=lambda x: x[0])
     diverse = _diverse_top_n([(err, full) for err, _, _, full in scored], n=5, min_diversity=0.5)
 
-    return {"routes": [{
+    result = {"routes": [{
         "route_type":        "out-and-back",
         "turnaround":        path_to_coords(G, full)[len(full) // 2],
         "geometry":          path_to_coords(G, full),
@@ -693,6 +734,9 @@ def generate_out_and_back(
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, full)),
         "stats": compute_route_stats(G, full, prefs),
     } for full in diverse]}
+
+    log_route_metrics("out-and-back", result["routes"], distance_m)
+    return result
 
 
 def generate_loop(
@@ -770,13 +814,16 @@ def generate_loop(
     scored.sort(key=lambda x: x[0])
     diverse = _diverse_top_n([(s, r) for s, _, r in scored], n=5, min_diversity=0.5)
 
-    return {"routes": [{
+    result = {"routes": [{
         "route_type":        "loop",
         "geometry":          path_to_coords(G, route),
         "distance_mi":       m_to_mi(path_length_m(G, route)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, route)),
         "stats": compute_route_stats(G, route, prefs),
     } for route in diverse]}
+
+    log_route_metrics("loop", result["routes"], distance_m)
+    return result 
 
 
 def generate_random_explore(
@@ -853,13 +900,16 @@ def generate_random_explore(
     route_candidates.sort(key=lambda x: x[0])
     diverse = _diverse_top_n([(err, path) for err, path in route_candidates], n=5, min_diversity=0.4)
 
-    return {"routes": [{
+    result =  {"routes": [{
         "route_type":        "random",
         "geometry":          path_to_coords(G, path),
         "distance_mi":       m_to_mi(path_length_m(G, path)),
         "elevation_gain_ft": m_to_ft(path_elevation_gain_m(G, path)),
         "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
+
+    log_route_metrics("random", result["routes"], distance_m)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1041,6 +1091,68 @@ def random_route(
         return generate_random_explore(G, start_lat, start_lon, mi_to_m(distance), prefs)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/metrics", summary="Aggregated route generation metrics")
+def get_metrics():
+    """Returns aggregate stats across all logged routes."""
+    if not os.path.exists(METRICS_PATH):
+        return {"message": "No metrics logged yet."}
+
+    with open(METRICS_PATH, "r") as f:
+        log = json.load(f)
+
+    if not log:
+        return {"message": "No metrics logged yet."}
+
+    import statistics
+
+    def aggregate(entries, key):
+        vals = [e[key] for e in entries if key in e and e[key] is not None]
+        if not vals:
+            return None
+        return {
+            "mean":   round(statistics.mean(vals), 2),
+            "median": round(statistics.median(vals), 2),
+            "min":    round(min(vals), 2),
+            "max":    round(max(vals), 2),
+        }
+
+    # split by route type
+    by_type = {}
+    for entry in log:
+        rt = entry["route_type"]
+        by_type.setdefault(rt, []).append(entry)
+
+    result = {
+        "total_routes_generated": len(log),
+        "overall": {
+            "avg_distance_error_pct": aggregate(log, "dist_error_pct"),
+            "avg_trail_pct":          aggregate(log, "trail_pct"),
+            "avg_elevation_ft":       aggregate(log, "elevation_ft"),
+            "avg_safety_cost":        aggregate(log, "safety_cost"),
+        },
+        "by_route_type": {},
+        "by_environment": {},
+    }
+
+    for rt, entries in by_type.items():
+        result["by_route_type"][rt] = {
+            "count":                  len(entries),
+            "avg_distance_error_pct": aggregate(entries, "dist_error_pct"),
+            "avg_trail_pct":          aggregate(entries, "trail_pct"),
+            "avg_elevation_ft":       aggregate(entries, "elevation_ft"),
+        }
+
+    return result
+
+
+@app.delete("/metrics", summary="Clear all logged metrics")
+def clear_metrics():
+    """Wipes the metrics log — useful for starting a fresh test session."""
+    if os.path.exists(METRICS_PATH):
+        os.remove(METRICS_PATH)
+    return {"message": "Metrics log cleared."}
 
 
 if __name__ == "__main__":
