@@ -567,31 +567,48 @@ from datetime import datetime
 
 METRICS_PATH = "route_metrics.json"
 
-def log_route_metrics(route_type: str, routes: list, requested_distance_m: float):
+def log_route_metrics(route_type: str, routes: list, requested_distance_m: float, prefs: dict = None):
     """Appends per-request metrics to a JSON log file for later analysis."""
     try:
-        # load existing log
         if os.path.exists(METRICS_PATH):
             with open(METRICS_PATH, "r") as f:
                 log = json.load(f)
         else:
             log = []
 
+        prefs = prefs or {}
+
+        # classify each weight into low/medium/high tier
+        def tier(val, low=0.7, high=1.3):
+            if val <= low:   return "low"
+            if val <= high:  return "medium"
+            return "high"
+
         for r in routes:
-            actual_m    = r["distance_mi"] * M_PER_MILE
-            dist_error  = abs(actual_m - requested_distance_m) / requested_distance_m * 100
-            stats       = r.get("stats", {})
+            actual_m   = r["distance_mi"] * M_PER_MILE
+            dist_error = abs(actual_m - requested_distance_m) / requested_distance_m * 100
+            stats      = r.get("stats", {})
 
             log.append({
-                "timestamp":        datetime.now().isoformat(),
-                "route_type":       route_type,
-                "requested_mi":     round(requested_distance_m / M_PER_MILE, 2),
-                "actual_mi":        r["distance_mi"],
-                "dist_error_pct":   round(dist_error, 2),
-                "elevation_ft":     r["elevation_gain_ft"],
-                "trail_pct":        stats.get("trail_pct", 0),
-                "safety_cost":      stats.get("safety_cost", 0),
-                "road_penalty":     stats.get("road_penalty", 0),
+                "timestamp":            datetime.now().isoformat(),
+                "route_type":           route_type,
+                "requested_mi":         round(requested_distance_m / M_PER_MILE, 2),
+                "actual_mi":            r["distance_mi"],
+                "dist_error_pct":       round(dist_error, 2),
+                "elevation_ft":         r["elevation_gain_ft"],
+                "trail_pct":            stats.get("trail_pct", 0),
+                "safety_score":         stats.get("safety_score", 0),
+                "road_avoidance_score": stats.get("road_avoidance_score", 0),
+                # ← new: raw preference weights
+                "w_elev":               prefs.get("w_elev",  0.7),
+                "w_safe":               prefs.get("w_safe",  1.2),
+                "w_road":               prefs.get("w_road",  0.8),
+                "w_trail":              prefs.get("w_trail", 0.8),
+                # ← new: tiered preference labels
+                "elev_pref":            tier(prefs.get("w_elev",  0.7)),
+                "safe_pref":            tier(prefs.get("w_safe",  1.2)),
+                "road_pref":            tier(prefs.get("w_road",  0.8)),
+                "trail_pref":           tier(prefs.get("w_trail", 0.8)),
             })
 
         with open(METRICS_PATH, "w") as f:
@@ -681,7 +698,7 @@ def generate_point_to_point(
         "target_distance_mi": m_to_mi(target_m),
     }
 
-    log_route_metrics("point-to-point", result["routes"], target_m)
+    log_route_metrics("point-to-point", result["routes"], target_m, prefs)
     return result
 
 def generate_out_and_back(
@@ -735,7 +752,7 @@ def generate_out_and_back(
         "stats": compute_route_stats(G, full, prefs),
     } for full in diverse]}
 
-    log_route_metrics("out-and-back", result["routes"], distance_m)
+    log_route_metrics("out-and-back", result["routes"], distance_m, prefs)
     return result
 
 
@@ -822,7 +839,7 @@ def generate_loop(
         "stats": compute_route_stats(G, route, prefs),
     } for route in diverse]}
 
-    log_route_metrics("loop", result["routes"], distance_m)
+    log_route_metrics("loop", result["routes"], distance_m, prefs)
     return result 
 
 
@@ -908,7 +925,7 @@ def generate_random_explore(
         "stats": compute_route_stats(G, path, prefs),
     } for path in diverse]}
 
-    log_route_metrics("random", result["routes"], distance_m)
+    log_route_metrics("random", result["routes"], distance_m, prefs)
     return result
 
 
@@ -1095,7 +1112,7 @@ def random_route(
 
 @app.get("/metrics", summary="Aggregated route generation metrics")
 def get_metrics():
-    """Returns aggregate stats across all logged routes."""
+    """Returns aggregate stats across all logged routes, grouped by preferences."""
     if not os.path.exists(METRICS_PATH):
         return {"message": "No metrics logged yet."}
 
@@ -1116,7 +1133,27 @@ def get_metrics():
             "median": round(statistics.median(vals), 2),
             "min":    round(min(vals), 2),
             "max":    round(max(vals), 2),
+            "count":  len(vals),
         }
+
+    def summarize(entries):
+        """Full metric summary for a group of entries."""
+        return {
+            "count":                    len(entries),
+            "avg_distance_error_pct":   aggregate(entries, "dist_error_pct"),
+            "avg_trail_pct":            aggregate(entries, "trail_pct"),
+            "avg_elevation_ft":         aggregate(entries, "elevation_ft"),
+            "avg_safety_score":         aggregate(entries, "safety_score"),
+            "avg_road_avoidance_score": aggregate(entries, "road_avoidance_score"),
+        }
+
+    def group_by(entries, key):
+        """Split entries into subgroups by a field value."""
+        groups = {}
+        for e in entries:
+            val = e.get(key, "unknown")
+            groups.setdefault(val, []).append(e)
+        return {k: summarize(v) for k, v in sorted(groups.items())}
 
     # split by route type
     by_type = {}
@@ -1124,28 +1161,24 @@ def get_metrics():
         rt = entry["route_type"]
         by_type.setdefault(rt, []).append(entry)
 
-    result = {
+    return {
         "total_routes_generated": len(log),
-        "overall": {
-            "avg_distance_error_pct": aggregate(log, "dist_error_pct"),
-            "avg_trail_pct":          aggregate(log, "trail_pct"),
-            "avg_elevation_ft":       aggregate(log, "elevation_ft"),
-            "avg_safety_cost":        aggregate(log, "safety_cost"),
+
+        # --- overall ---
+        "overall": summarize(log),
+
+        # --- by route type ---
+        "by_route_type": {
+            rt: summarize(entries)
+            for rt, entries in by_type.items()
         },
-        "by_route_type": {},
-        "by_environment": {},
+
+        # --- by preference tiers ---
+        "by_safety_preference":    group_by(log, "safe_pref"),
+        "by_elevation_preference": group_by(log, "elev_pref"),
+        "by_road_preference":      group_by(log, "road_pref"),
+        "by_trail_preference":     group_by(log, "trail_pref"),
     }
-
-    for rt, entries in by_type.items():
-        result["by_route_type"][rt] = {
-            "count":                  len(entries),
-            "avg_distance_error_pct": aggregate(entries, "dist_error_pct"),
-            "avg_trail_pct":          aggregate(entries, "trail_pct"),
-            "avg_elevation_ft":       aggregate(entries, "elevation_ft"),
-        }
-
-    return result
-
 
 @app.delete("/metrics", summary="Clear all logged metrics")
 def clear_metrics():
