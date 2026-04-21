@@ -11,7 +11,7 @@ Scoring functions (road_penalty, trail_bonus, elevation_cost, safety_score)
 taken from route_recommender_draft.py.
 
 Install:
-    pip install fastapi uvicorn osmnx networkx scipy pydantic pandas numpy
+    pip install fastapi uvicorn osmnx networkx scipy pydantic pandas numpy geopy
 
 Run:
     uvicorn routing:app --reload
