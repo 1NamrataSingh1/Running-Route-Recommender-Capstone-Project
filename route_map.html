@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Route Recommender — Team 26</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:        #0d0f14;
+      --panel:     #13161e;
+      --border:    #1f2433;
+      --accent:    #7c6af7;
+      --accent2:   #4fd1c5;
+      --text:      #ffffff;
+      --muted:     #94a3b8;
+      --success:   #48bb78;
+      --warn:      #f6ad55;
+      --danger:    #fc8181;
+      --mono:      'DM Mono', monospace;
+      --sans:      'Syne', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      grid-template-rows: 52px 1fr;
+      overflow: hidden;
+    }
+
+    header {
+      grid-column: 1 / -1;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+    }
+    header .logo { font-size: 1rem; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+    header .logo span { color: var(--accent); }
+    header .tag {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      background: var(--border);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .route-stats { margin-left: auto; display: flex; gap: 28px; align-items: center; }
+    .stat-item { text-align: right; }
+    .stat-item .lbl { font-family: var(--mono); font-size: 0.55rem; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .stat-item .val { font-family: var(--mono); font-size: 0.9rem; font-weight: 500; color: var(--accent2); }
+
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .sidebar-header { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .sidebar-header h2 { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
+
+    .form-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+    .form-section-title {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; font-family: var(--mono); }
+    .field input, .field select {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field select option { background: var(--panel); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .slider-field label { display: flex; justify-content: space-between; }
+    .slider-field label span { font-family: var(--mono); font-size: 0.72rem; color: var(--accent2); }
+    input[type=range] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      outline: none;
+      margin-top: 6px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    .adv-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .adv-toggle {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--accent);
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .adv-toggle::before { content: '▶'; font-size: 0.5rem; transition: transform 0.2s; }
+    .adv-toggle.open::before { transform: rotate(90deg); }
+
+    .btn-reset-weights {
+      font-family: var(--mono);
+      font-size: 0.6rem;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      display: none;
+    }
+    .btn-reset-weights:hover { color: var(--accent2); border-color: var(--accent2); }
+    .btn-reset-weights.visible { display: inline-block; }
+
+    #adv-weights { display: none; }
+    #adv-weights.visible { display: block; }
+
+    .btn-generate {
+      margin: 14px 20px;
+      width: calc(100% - 40px);
+      padding: 11px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-family: var(--sans);
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn-generate:hover { opacity: 0.88; }
+    .btn-generate:active { transform: scale(0.98); }
+    .btn-generate:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .route-tabs { padding: 10px 20px 0; display: none; flex-direction: column; gap: 6px; }
+    .route-tabs.visible { display: flex; }
+    .route-tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      background: transparent;
+      transition: all 0.15s;
+      text-align: left;
+    }
+    .route-tab:hover { border-color: var(--accent); background: rgba(124,106,247,0.06); }
+    .route-tab.active { border-color: var(--accent); background: rgba(124,106,247,0.12); }
+    .route-tab .tab-num {
+      font-family: var(--mono);
+      font-size: 0.65rem;
+      color: var(--muted);
+      background: var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      flex-shrink: 0;
+    }
+    .route-tab.active .tab-num { background: var(--accent); color: white; }
+    .route-tab .tab-info { flex: 1; }
+    .route-tab .tab-dist { font-family: var(--mono); font-size: 0.75rem; color: var(--text); }
+    .route-tab .tab-elev { font-family: var(--mono); font-size: 0.65rem; color: var(--muted); }
+
+    /* loading spinner in sidebar — no error text here */
+    #status { margin: 8px 20px; font-family: var(--mono); font-size: 0.7rem; display: none; }
+    #status.loading { color: var(--accent2); display: block; }
+
+    main { position: relative; background: #0a0c11; }
+    #map { width: 100%; height: 100%; }
+
+    #map-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      pointer-events: none;
+    }
+    #map-empty .big { font-size: 3rem; }
+    #map-empty p { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); text-align: center; line-height: 1.8; }
+
+    /* ── Error box in the right map panel ───────────────────────── */
+    #map-error {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      z-index: 500;
+      background: rgba(13, 15, 20, 0.75);
+      backdrop-filter: blur(2px);
+    }
+    #map-error.visible { display: flex; }
+    #map-error-box {
+      background: #1a0a0a;
+      border: 2px solid var(--danger);
+      border-radius: 14px;
+      padding: 32px 40px;
+      max-width: 480px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 8px 40px rgba(252, 129, 129, 0.2);
+    }
+    #map-error-icon { font-size: 2.5rem; margin-bottom: 14px; }
+    #map-error-title {
+      font-family: var(--sans);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--danger);
+      margin-bottom: 10px;
+    }
+    #map-error-msg {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      color: #f9a8a8;
+      line-height: 1.7;
+    }
+    #map-error-dismiss {
+      margin-top: 20px;
+      padding: 8px 24px;
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    #map-error-dismiss:hover { background: var(--danger); color: #1a0a0a; }
+
+    #legend {
+      display: none;
+      position: absolute;
+      bottom: 20px;
+      right: 12px;
+      z-index: 1000;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--muted);
+    }
+    #legend h4 { color: var(--text); margin-bottom: 7px; font-size: 0.72rem; }
+    .leg { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); flex-shrink: 0; }
+    .dot-split {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.3);
+      flex-shrink: 0;
+      background: linear-gradient(to right, #48bb78 50%, #fc8181 50%);
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: var(--panel) !important;
+      color: var(--text) !important;
+      border: 1px solid var(--border) !important;
+      border-radius: 8px !important;
+      font-family: var(--mono) !important;
+      font-size: 0.75rem !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5) !important;
+    }
+    .leaflet-popup-tip { background: var(--panel) !important; }
+    .split-marker-icon { background: none; border: none; }
+
+    .slider-range-labels {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      font-size: 0.55rem;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    .route-stats-grid {
+      gap: 6px;
+      margin-top: 10px;
+      padding: 0 20px 12px;
+      display: none;
+      grid-template-columns: 1fr 1fr;
+    }
+    .route-stats-grid.visible { display: grid; }
+
+    .stat-badge { border-radius: 7px; padding: 8px 10px; border: 1px solid var(--border); }
+    .stat-badge .badge-label { font-family: var(--mono); font-size: 0.55rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+    .stat-badge .badge-val   { font-family: var(--mono); font-size: 0.85rem; font-weight: 500; }
+    .stat-badge .badge-bar   { height: 3px; border-radius: 2px; margin-top: 5px; background: var(--border); overflow: hidden; }
+    .stat-badge .badge-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+
+    .badge-trail  { border-color: #4fd1c533; background: #4fd1c508; }
+    .badge-trail  .badge-label { color: var(--accent2); }
+    .badge-trail  .badge-bar-fill { background: var(--accent2); }
+
+    .badge-elev   { border-color: #f6ad5533; background: #f6ad5508; }
+    .badge-elev   .badge-label { color: var(--warn); }
+    .badge-elev   .badge-bar-fill { background: var(--warn); }
+
+    .badge-safety { border-color: #48bb7833; background: #48bb7808; }
+    .badge-safety .badge-label { color: var(--success); }
+    .badge-safety .badge-bar-fill { background: var(--success); }
+
+    .badge-road   { border-color: #fc818133; background: #fc818108; }
+    .badge-road   .badge-label { color: var(--danger); }
+    .badge-road   .badge-bar-fill { background: var(--danger); }
+
+    .stat-explain {
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      color: var(--muted);
+      padding: 0 20px 14px;
+      line-height: 1.6;
+      display: none;
+    }
+    .stat-explain.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Route<span>Rec</span></div>
+  <div class="tag">Team 26 · DS440</div>
+  <div class="route-stats">
+    <div class="stat-item">
+      <div class="lbl">Route Type</div>
+      <div class="val" id="hdr-type">—</div>
+    </div>
+    <div class="stat-item">
+      <div class="lbl">Distance</div>
+      <div class="val" id="hdr-dist">—</div>
+    </div>
+    <div class="stat-item">
+      <div class="lbl">Elev. Gain</div>
+      <div class="val" id="hdr-elev">—</div>
+    </div>
+  </div>
+</header>
+
+<aside>
+  <div class="sidebar-header"><h2>Configure Route</h2></div>
+
+  <div class="form-section">
+    <div class="form-section-title">Location &amp; Distance</div>
+    <div class="field">
+      <label>Start Address</label>
+      <input type="text" id="address" placeholder="e.g. 1600 Broad St, Philadelphia, PA"/>
+    </div>
+    <div class="field" id="end-address-field" style="display:none">
+      <label>End Address</label>
+      <input type="text" id="end_address" placeholder="e.g. 30th St Station, Philadelphia, PA"/>
+    </div>
+    <div class="field">
+      <label>Distance (miles)</label>
+      <input type="number" id="distance" value="3.1" step="0.1" min="0.3"/>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <div class="form-section-title">Route Type</div>
+    <div class="field">
+      <label>Type</label>
+      <select id="route_type">
+        <option value="point-to-point">Point to Point</option>
+        <option value="out-and-back">Out and Back</option>
+        <option value="loop" selected>Loop</option>
+        <option value="random">Random / Exploratory</option>
+      </select>
+    </div>
+    <div class="field slider-field" id="randomness-field" style="display:none">
+      <label>Randomness Level <span id="rand-val">0.5</span></label>
+      <input type="range" id="randomness_level" min="0" max="1" step="0.05" value="0.5"
+             oninput="document.getElementById('rand-val').textContent=parseFloat(this.value).toFixed(2)"/>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <div class="adv-header">
+      <button class="adv-toggle" id="adv-btn" onclick="toggleAdv()">Advanced Weights</button>
+      <button class="btn-reset-weights" id="reset-weights-btn" onclick="resetWeights()">↺ Reset</button>
+    </div>
+    <div id="adv-weights">
+      <div class="field slider-field">
+        <label>Elevation Importance (Prefer Flatter Routes) <span id="we-val">0.7</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_elev" min="0" max="2" step="0.1" value="0.7"
+               oninput="document.getElementById('we-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Safety Importance <span id="ws-val">1.2</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_safe" min="0" max="2" step="0.1" value="1.2"
+               oninput="document.getElementById('ws-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Traffic Level Importance <span id="wr-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_road" min="0" max="2" step="0.1" value="0.8"
+               oninput="document.getElementById('wr-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+      <div class="field slider-field">
+        <label>Trail Importance <span id="wt-val">0.8</span></label>
+        <div class="slider-range-labels"><span>Low</span><span>High</span></div>
+        <input type="range" id="w_trail" min="0" max="2" step="0.1" value="0.8"
+               oninput="document.getElementById('wt-val').textContent=parseFloat(this.value).toFixed(1)"/>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-generate" id="gen-btn" onclick="generateRoutes()">Generate Routes</button>
+  <div id="status"></div>
+  <div class="route-tabs" id="route-tabs"></div>
+  <div class="route-stats-grid" id="route-stats-grid"></div>
+  <div class="stat-explain" id="stat-explain"></div>
+</aside>
+
+<main>
+  <div id="map-empty">
+    <div class="big">🗺️</div>
+    <p>Configure your route on the left<br/>and click <strong>Generate Routes</strong></p>
+  </div>
+
+  <!-- Error overlay shown in the map panel -->
+  <div id="map-error">
+    <div id="map-error-box">
+      <div id="map-error-icon">⚠️</div>
+      <div id="map-error-title">Could not generate route</div>
+      <div id="map-error-msg"></div>
+      <button id="map-error-dismiss" onclick="dismissError()">Try Again</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <div id="legend">
+    <h4>Legend</h4>
+    <div class="leg" id="leg-start"><div class="dot" style="background:#48bb78"></div> Start</div>
+    <div class="leg" id="leg-finish"><div class="dot" style="background:#fc8181"></div> Finish</div>
+    <div class="leg" id="leg-startfinish" style="display:none"><div class="dot-split"></div> Start / Finish</div>
+    <div class="leg" id="leg-turn" style="display:none"><div class="dot" style="background:#f6ad55"></div> Turnaround</div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const API = '';
+  let map       = null;
+  let allRoutes = [];
+
+  const WEIGHT_DEFAULTS = {
+    w_elev:  { id: 'w_elev',  val: 0.7, display: 'we-val' },
+    w_safe:  { id: 'w_safe',  val: 1.2, display: 'ws-val' },
+    w_road:  { id: 'w_road',  val: 0.8, display: 'wr-val' },
+    w_trail: { id: 'w_trail', val: 0.8, display: 'wt-val' },
+  };
+
+  document.getElementById('route_type').addEventListener('change', function () {
+    document.getElementById('randomness-field').style.display  = this.value === 'random'         ? 'block' : 'none';
+    document.getElementById('end-address-field').style.display = this.value === 'point-to-point' ? 'block' : 'none';
+  });
+
+  function toggleAdv() {
+    document.getElementById('adv-btn').classList.toggle('open');
+    document.getElementById('adv-weights').classList.toggle('visible');
+    document.getElementById('reset-weights-btn').classList.toggle('visible');
+  }
+
+  function resetWeights() {
+    Object.values(WEIGHT_DEFAULTS).forEach(({ id, val, display }) => {
+      document.getElementById(id).value = val;
+      document.getElementById(display).textContent = val.toFixed(1);
+    });
+  }
+
+  // ── Translate raw error messages into plain English ──────────────
+  function friendlyError(raw) {
+    const msg = (raw || '').toString();
+
+    // Server is not running / HTML returned instead of JSON
+    if (msg.includes('DOCTYPE') || msg.includes('ReadableStream') ||
+        msg.includes('not valid JSON') || msg.includes('Unexpected token')) {
+      return 'The server is not responding. Make sure uvicorn is running, then refresh and try again.';
+    }
+    // Network / fetch failure
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') ||
+        msg.includes('ERR_CONNECTION_REFUSED')) {
+      return 'Could not connect to the server. Make sure uvicorn is running at http://127.0.0.1:8000.';
+    }
+    // Address errors — these come from the backend and are already user-friendly, pass them through
+    if (msg.toLowerCase().includes('address') || msg.toLowerCase().includes('philadelphia') ||
+        msg.toLowerCase().includes('not found') || msg.toLowerCase().includes('geocod')) {
+      return msg;
+    }
+    // Distance too short
+    if (msg.toLowerCase().includes('shorter than')) {
+      return msg;
+    }
+    // No route found
+    if (msg.toLowerCase().includes('no route') || msg.toLowerCase().includes('no path') ||
+        msg.toLowerCase().includes('could not build') || msg.toLowerCase().includes('no turnaround') ||
+        msg.toLowerCase().includes('no loop')) {
+      return msg;
+    }
+    // Timeout
+    if (msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('timed out')) {
+      return 'The request took too long. Try a shorter distance or a different route type.';
+    }
+    // Generic HTTP errors
+    if (msg.startsWith('HTTP ')) {
+      return 'Something went wrong on the server. Please try again.';
+    }
+    // Fallback — return the raw message but strip any HTML/stack trace
+    const clean = msg.replace(/<[^>]+>/g, '').split('\n')[0].trim();
+    return clean || 'Something went wrong. Please try again.';
+  }
+
+  function showError(rawMsg) {
+    document.getElementById('map-error-msg').textContent = friendlyError(rawMsg);
+    document.getElementById('map-error').classList.add('visible');
+    document.getElementById('map-empty').style.display = 'none';
+  }
+
+  function dismissError() {
+    document.getElementById('map-error').classList.remove('visible');
+    document.getElementById('map-empty').style.display = 'flex';
+  }
+
+  function buildQuery() {
+    const address     = encodeURIComponent(document.getElementById('address').value.trim());
+    const endAddrEl   = document.getElementById('end_address');
+    const end_address = endAddrEl ? encodeURIComponent(endAddrEl.value.trim()) : '';
+    const dist = document.getElementById('distance').value;
+    const we   = document.getElementById('w_elev').value;
+    const ws   = document.getElementById('w_safe').value;
+    const wr   = document.getElementById('w_road').value;
+    const wt   = document.getElementById('w_trail').value;
+    const rl   = document.getElementById('randomness_level').value;
+    const type = document.getElementById('route_type').value;
+
+    let params = `address=${address}&distance=${dist}&w_elev=${we}&w_safe=${ws}&w_road=${wr}&w_trail=${wt}`;
+    if (type === 'random')         params += `&randomness_level=${rl}`;
+    if (type === 'point-to-point') params += `&end_address=${end_address}`;
+    return `${API}/route/${type}?${params}`;
+  }
+
+  async function generateRoutes() {
+    const btn    = document.getElementById('gen-btn');
+    const status = document.getElementById('status');
+
+    // Client-side validation before hitting the server
+    const type    = document.getElementById('route_type').value;
+    const address = document.getElementById('address').value.trim();
+    if (!address) {
+      showError('Please enter a start address. Make sure to include "Philadelphia" in the address.');
+      return;
+    }
+    if (type === 'point-to-point') {
+      const endAddr = document.getElementById('end_address').value.trim();
+      if (!endAddr) {
+        showError('Please enter an end address for point-to-point routing.');
+        return;
+      }
+    }
+
+    document.getElementById('map-error').classList.remove('visible');
+
+    btn.disabled = true;
+    status.style.display = '';
+    status.className = 'loading';
+    status.textContent = '⟳  Generating routes — this may take 10–30 s…';
+    document.getElementById('route-tabs').classList.remove('visible');
+    document.getElementById('route-stats-grid').classList.remove('visible');
+    document.getElementById('stat-explain').classList.remove('visible');
+
+    try {
+      const resp = await fetch(buildQuery());
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      allRoutes = data.routes || [];
+      if (allRoutes.length === 0) throw new Error('No routes returned.');
+
+      status.className = '';
+      status.style.display = 'none';
+      buildTabs();
+      selectRoute(0);
+    } catch (e) {
+      status.className = '';
+      status.style.display = 'none';
+      showError(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function buildTabs() {
+    const container = document.getElementById('route-tabs');
+    container.innerHTML = '';
+    allRoutes.forEach((r, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'route-tab';
+      btn.id = `tab-${i}`;
+      btn.onclick = () => selectRoute(i);
+      btn.innerHTML = `
+        <span class="tab-num">${i + 1}</span>
+        <div class="tab-info">
+          <div class="tab-dist">${r.distance_mi} mi</div>
+          <div class="tab-elev">↑ ${r.elevation_gain_ft} ft elev. gain</div>
+        </div>`;
+      container.appendChild(btn);
+    });
+    container.classList.add('visible');
+  }
+
+  function selectRoute(idx) {
+    document.querySelectorAll('.route-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+    const r = allRoutes[idx];
+    document.getElementById('hdr-type').textContent = r.route_type.replace(/-/g, ' ');
+    document.getElementById('hdr-dist').textContent = `${r.distance_mi} mi`;
+    document.getElementById('hdr-elev').textContent = `${r.elevation_gain_ft} ft`;
+    renderStatBadges(r);
+    renderMap(r);
+  }
+
+  function samePoint(a, b, thresholdM = 30) {
+    const R  = 6_371_000;
+    const p1 = a[0] * Math.PI / 180;
+    const p2 = b[0] * Math.PI / 180;
+    const dp = (b[0] - a[0]) * Math.PI / 180;
+    const dl = (b[1] - a[1]) * Math.PI / 180;
+    const x  = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x)) < thresholdM;
+  }
+
+  function splitMarker(latlng) {
+    const size = 22, r = size / 2;
+    const svg = `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+        <path d="M ${r},0 A ${r},${r} 0 0,0 ${r},${size} Z" fill="#48bb78"/>
+        <path d="M ${r},0 A ${r},${r} 0 0,1 ${r},${size} Z" fill="#fc8181"/>
+        <circle cx="${r}" cy="${r}" r="${r-1}" fill="none" stroke="white" stroke-width="2"/>
+        <line x1="${r}" y1="0" x2="${r}" y2="${size}" stroke="white" stroke-width="1.5"/>
+      </svg>`;
+    return L.marker(latlng, {
+      icon: L.divIcon({ className: 'split-marker-icon', html: svg, iconSize: [size, size], iconAnchor: [r, r], popupAnchor: [0, -r] })
+    });
+  }
+
+  function renderStatBadges(r) {
+    const s    = r.stats;
+    const grid = document.getElementById('route-stats-grid');
+    const expl = document.getElementById('stat-explain');
+    if (!s) { grid.classList.remove('visible'); expl.classList.remove('visible'); return; }
+
+    const trailW    = Math.min(s.trail_pct, 100);
+    const elevW     = Math.min(s.elev_cost / 5 * 100, 100);
+    const safeW     = Math.round((s.safety_score ?? 0) * 100);
+    const roadScore = Math.round((s.road_avoidance_score ?? 0) * 100);
+    const roadLevel = s.road_level   ?? (roadScore < 40 ? 'Low' : roadScore < 70 ? 'Med' : 'High');
+    const safeLevel = s.safety_level ?? (safeW >= 70 ? 'High' : safeW >= 40 ? 'Normal' : 'Medium');
+
+    grid.innerHTML = `
+      <div class="stat-badge badge-trail">
+        <div class="badge-label">🌿 Trail Coverage</div>
+        <div class="badge-val">${s.trail_pct}%</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${trailW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-elev">
+        <div class="badge-label">⛰ Elevation Load</div>
+        <div class="badge-val">${r.elevation_gain_ft} ft</div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${elevW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-safety">
+        <div class="badge-label">🛡 Safety Score</div>
+        <div class="badge-val">${safeW}<span style="font-size:0.6rem;opacity:0.7">/100</span> &nbsp;<span style="font-size:0.65rem;opacity:0.85">${safeLevel}</span></div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${safeW}%"></div></div>
+      </div>
+      <div class="stat-badge badge-road">
+        <div class="badge-label">🚗 Highway Avoidance</div>
+        <div class="badge-val">${roadScore}<span style="font-size:0.6rem;opacity:0.7">/100</span> &nbsp;<span style="font-size:0.65rem;opacity:0.85">${roadLevel}</span></div>
+        <div class="badge-bar"><div class="badge-bar-fill" style="width:${roadScore}%"></div></div>
+      </div>`;
+
+    const trailNote = s.trail_pct > 50
+      ? `${s.trail_pct}% of this route is on trails`
+      : `mostly road-based (${s.trail_pct}% trail)`;
+    const elevNote  = r.elevation_gain_ft < 100 ? 'minimal elevation' : r.elevation_gain_ft < 300 ? 'moderate hills' : 'significant climbing';
+    const safeNote  = safeLevel === 'High' ? 'high safety rating' : safeLevel === 'Normal' ? 'normal safety' : 'medium safety rating';
+    expl.textContent = `This route was selected because it is ${trailNote}, with ${elevNote} and a ${safeNote} — best matching your preference weights.`;
+
+    grid.classList.add('visible');
+    expl.classList.add('visible');
+  }
+
+  function renderMap(route) {
+    const coords = route.geometry;
+    document.getElementById('map-empty').style.display = 'none';
+    document.getElementById('map-error').classList.remove('visible');
+    document.getElementById('legend').style.display = 'block';
+
+    if (!map) {
+      map = L.map('map', { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19
+      }).addTo(map);
+    }
+
+    map.eachLayer(layer => { if (!(layer instanceof L.TileLayer)) map.removeLayer(layer); });
+
+    const line = L.polyline(coords, {
+      color: '#7c6af7', weight: 5, opacity: 0.9, lineJoin: 'round', lineCap: 'round'
+    }).addTo(map);
+
+    const start  = coords[0];
+    const finish = coords[coords.length - 1];
+    const isLoop = samePoint(start, finish);
+
+    const legStart       = document.getElementById('leg-start');
+    const legFinish      = document.getElementById('leg-finish');
+    const legStartFinish = document.getElementById('leg-startfinish');
+
+    if (isLoop) {
+      splitMarker(start).addTo(map).bindPopup('<b>▶ Start &amp; Finish</b>');
+      legStart.style.display       = 'none';
+      legFinish.style.display      = 'none';
+      legStartFinish.style.display = 'flex';
+    } else {
+      L.circleMarker(start, {
+        radius: 10, fillColor: '#48bb78', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>▶ Start</b>');
+      L.circleMarker(finish, {
+        radius: 10, fillColor: '#fc8181', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>⬛ Finish</b>');
+      legStart.style.display       = 'flex';
+      legFinish.style.display      = 'flex';
+      legStartFinish.style.display = 'none';
+    }
+
+    const legTurn = document.getElementById('leg-turn');
+    if (route.route_type === 'out-and-back' && route.turnaround) {
+      L.circleMarker(route.turnaround, {
+        radius: 8, fillColor: '#f6ad55', color: '#fff', weight: 2, fillOpacity: 1
+      }).addTo(map).bindPopup('<b>↩ Turnaround</b>');
+      legTurn.style.display = 'flex';
+    } else {
+      legTurn.style.display = 'none';
+    }
+
+    map.fitBounds(line.getBounds(), { padding: [40, 40] });
+  }
+</script>
+</body>
+</html>
