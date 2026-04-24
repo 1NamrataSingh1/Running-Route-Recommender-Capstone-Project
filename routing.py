@@ -587,6 +587,12 @@ def log_route_metrics(route_type: str, routes: list, requested_distance_m: float
         for r in routes:
             actual_m   = r["distance_mi"] * M_PER_MILE
             dist_error = abs(actual_m - requested_distance_m) / requested_distance_m * 100
+            '''
+            # skip logging clearly broken routes
+            if dist_error > 50:
+                print(f"[metrics] Skipping outlier route with {dist_error:.1f}% distance error")
+                continue
+            '''
             stats      = r.get("stats", {})
 
             log.append({
@@ -911,7 +917,13 @@ def generate_random_explore(
             if home:
                 full_path += [_flat(n) for n in home][1:]
 
-        err = abs(path_length_m(G, full_path) - distance_m)
+        actual_len = path_length_m(G, full_path)
+
+        # skip routes that are essentially empty or wildly off
+        if abs(actual_len - distance_m) > distance_m * 0.2:
+            continue
+
+        err = abs(actual_len - distance_m)
         route_candidates.append((err, full_path))
 
     route_candidates.sort(key=lambda x: x[0])
